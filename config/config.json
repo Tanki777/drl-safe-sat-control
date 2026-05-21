@@ -1,0 +1,50 @@
+{
+    "general": {
+        "DEVICE": "cpu"
+    },
+
+    "training": {
+        "MODEL_NAME": "rewPrak_envBsk_3_seed1000_step1k_sched_180",
+        "SCHEDULE_FILE_NAME": "sched_180.json",
+        "CONTINUE_TRAINING": false,
+        "USE_SAFETY_FILTER": 0
+    },
+
+    "evaluation": {
+        "MODEL_NAME": "rewYang_sched_180",
+        "TIMESTEP": 1200000,
+        "USE_SAFETY_FILTER": 0,
+        "MAX_STEPS": 3000,
+        "MIN_INITIAL_ERROR_ANGLE": 0.0,
+        "MAX_INITIAL_ERROR_ANGLE": 180.0,
+        "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
+        "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
+        "MIN_HALF_ANGLE_KOZ": 0.0,
+        "MAX_HALF_ANGLE_KOZ": 0.0
+    },
+
+    "visualization": {
+        "MODEL_NAME": "rewPrak_envBsk_3_sched_180",
+        "TIMESTEP": 5700000,
+        "USE_SAFETY_FILTER": 0,
+        "MAX_STEPS": 3000,
+        "MIN_INITIAL_ERROR_ANGLE": 0.0,
+        "MAX_INITIAL_ERROR_ANGLE": 180.0,
+        "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
+        "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
+        "MIN_HALF_ANGLE_KOZ": 0.0,
+        "MAX_HALF_ANGLE_KOZ": 0.0,
+        "CREATE_VIDEO": false
+    },
+
+    "env_simulator": {
+        "MAX_STEPS": 3000,
+        "MIN_INITIAL_ERROR_ANGLE": 0.0,
+        "MAX_INITIAL_ERROR_ANGLE": 0.0,
+        "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
+        "MAX_INITIAL_ANGULAR_VELOCITY": 0.0,
+        "MIN_HALF_ANGLE_KOZ": 0.0,
+        "MAX_HALF_ANGLE_KOZ": 0.0
+    }
+}
+
