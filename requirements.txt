@@ -5,5 +5,7 @@ numba
 tensorboard
 scipy
 imageio
+bsk
+pytest
 # PyTorch with CUDA support - install separately with:
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
