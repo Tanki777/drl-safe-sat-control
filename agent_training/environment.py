@@ -340,14 +340,8 @@ class BasiliskRWEnv(gym.Env):
 
         # If min and max are not equal, sample randomly
         else:
-            # Random angle between min and max, following an exponential distribution
-            scale_parameter = (max_angle_deg - min_angle_deg) * 0.5  # scale parameter for exponential distribution
-            angle_deg = np.random.exponential(scale_parameter)
-            angle_deg = max_angle_deg - angle_deg  # inverse distribution direction, so larger angles are more probable
-
-            # If the sampled angle is out of bounds, resample until valid
-            while angle_deg < min_angle_deg or angle_deg > max_angle_deg:
-                angle_deg = np.random.exponential(scale_parameter)
+            # Random angle between min and max, following an uniform distribution
+            angle_deg = np.random.uniform(min_angle_deg, max_angle_deg)
 
         angle_rad = angle_deg * np.pi / 180  # convert to radians
         

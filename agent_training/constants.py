@@ -13,5 +13,5 @@ class Constants:
     TORQUE_WHEEL_MAX = 0.001 # Maximum wheel torque (Nm)
     SPEED_WHEEL_MAX = 6000.0 # Maximum wheel speed (RPM)
     MOMENTUM_WHEEL_MAX = 0.01 # Maximum wheel momentum (Nms^-1)
-    # TODO: clarify whether 10 Nms^-1 or 1/3 of that should be used. Paper says 10 total, basilisk example uses 10 per wheel.
+    # TODO: clarify whether 10 mNms^-1 or 1/3 of that should be used. Paper says 10 total, basilisk example uses 10 per wheel.
     TIME_DELTA = 0.1 # Simulation timestep (s)
