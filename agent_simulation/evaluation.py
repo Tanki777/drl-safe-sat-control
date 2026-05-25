@@ -16,8 +16,8 @@ if _drl_repo_dir not in sys.path:
 
 from stable_baselines3 import SAC
 
-from agent_training.constants import dt
-from agent_training.environment import SatDynEnv, SatThrusterEnv, BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz
+from agent_training.constants import Constants
+from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz
 from config.config import Config
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
@@ -55,20 +55,19 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(initial_state, use_safety_filter):
+def create_evaluation_env(initial_state):
     """
     Create the evaluation environment.
     Args:
         initial_state: Initial state configuration for environment.
-        use_safety_filter: Safety filter mode.
     Returns:
         eval_env: The created evaluation environment.
     """
-    eval_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, use_safety_filter=use_safety_filter)
+    eval_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)
     return eval_env
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, use_safety_filter: int, max_steps: int, episodes: int, worker_id: int):
+def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, worker_id: int):
     """
     Worker function to evaluate agent for a subset of episodes.
     This function will be run in parallel by multiple processes.
@@ -76,7 +75,6 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, u
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
         initial_state: Initial state configuration for environment.
-        use_safety_filter: Safety filter mode.
         max_steps: Maximum steps per episode.
         episodes: Number of episodes to run.
         worker_id: ID of this worker process.
@@ -87,7 +85,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, u
     model = load_agent(model_name, timestep)
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(initial_state, use_safety_filter)
+    eval_env = create_evaluation_env(initial_state)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -110,13 +108,13 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, u
 
         # Simulation loop
         while not done:
-            action_agent, _states = model.predict(obs, deterministic=True)
+            action, _states = model.predict(obs, deterministic=True)
 
             states.append(obs.copy())
 
             # Step the environment
-            obs, reward, done, truncated, info = eval_env.step(action_agent) # action_filtered is the filter output if applied, else same as action_agent
-            torques.append(eval_env.action_filtered.copy())
+            obs, reward, done, truncated, info = eval_env.step(action)
+            torques.append(action.copy())
             rewards.append(reward)
 
             # Add up reward
@@ -143,8 +141,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, u
             "half_angle_koz": eval_env.half_angle_koz,
             "margin_angles_koz": states_array[:, 20]*scale_margin_koz*180/np.pi,
             "min_margin_koz": eval_env.min_margin_koz,
-            "cnt_Koz_violations": eval_env.entered_koz_count,
-            "filter_log": eval_env.filter_log
+            "cnt_Koz_violations": eval_env.entered_koz_count
         }
 
         simulation_data.append(episode_data)
@@ -176,14 +173,13 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, u
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, initial_state: list, use_safety_filter: int, max_steps: int, episodes: int, num_workers: int = 4):
+def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
     """
     Simulate the agent in parallel using multiple processes and saves the data at the end.
     Args:
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
         initial_state: Initial state configuration for environment.
-        use_safety_filter: Safety filter mode.
         max_steps: Maximum steps per episode.
         episodes: Total number of episodes to run.
         num_workers: Number of parallel worker processes (default: 4).
@@ -210,7 +206,7 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, use_safe
         for worker_id in range(num_workers):
             result = pool.apply_async(
                 evaluate_agent_worker,
-                args=(model_name, timestep, initial_state, use_safety_filter, max_steps, episode_counts[worker_id], worker_id)
+                args=(model_name, timestep, initial_state, max_steps, episode_counts[worker_id], worker_id)
             )
             results.append(result)
         
@@ -242,7 +238,7 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, use_safe
 
     # Save episode data
     time_iso = time.strftime("%Y-%m-%d-%H-%M-%S")
-    save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_filter[{use_safety_filter}]_ep[{episodes}]_{time_iso}.npz")
+    save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_ep[{episodes}]_{time_iso}.npz")
     np.savez(save_path, data=np.array(simulation_data), dtype=object)
 
     # Print results
@@ -288,7 +284,7 @@ def calc_metrics(data: list):
             err_angle = 2 * np.arccos(np.abs(quat[0])) * 180/np.pi
             if err_angle <= 0.25:
                 if not tmp_settled:
-                    tmp_settling_time = idx * dt
+                    tmp_settling_time = idx * Constants.TIME_DELTA
                 tmp_settled = True
             else:
                 tmp_settled = False
@@ -387,14 +383,6 @@ def load_evaluation_data(file_name: str):
             pass
 
         if episode_data["cumulative_rewards"][-1] < -2800:
-            #print(f"{i}:\n{episode_data["filter_log"]}")
-            pass
-
-        if i == 0 and "filter_log" not in episode_data:
-            print(f"{i} does not have filter log")
-
-        if "filter_log" in episode_data and episode_data["filter_log"] != "":
-            #print(f"{i}:\n{episode_data["filter_log"]}")
             pass
 
         if 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 120 and episode_data["cumulative_rewards"][-1] > 120:
@@ -414,7 +402,6 @@ def load_evaluation_data(file_name: str):
             pass
 
         if i == 238:
-            #print(f"{i}:\n{episode_data['filter_log']}")
             pass
         
         # if the last attitude error is above 5 degree and the last 50 omega norms are below 0.1 deg/s each
@@ -466,7 +453,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.USE_SAFETY_FILTER, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
     t_end = time.time()
 
     print()

@@ -27,8 +27,8 @@ video_dir = os.path.join(repo_parent_dir, "videos")
 if not os.path.exists(video_dir):
     os.makedirs(video_dir)
 
-from agent_training.environment import SatDynEnv, SatThrusterEnv, BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz, scale_angular_velocity_wheels
-from agent_training.constants import dt
+from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz, scale_angular_velocity_wheels
+from agent_training.constants import Constants
 from agent_simulation.evaluation import create_evaluation_env, load_agent
 from config.config import Config
 
@@ -61,14 +61,14 @@ def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_na
 
     # Simulation loop
     while not done:
-        action_agent, _states = model.predict(obs, deterministic=True)
+        action, _states = model.predict(obs, deterministic=True)
 
         states.append(obs.copy())
 
         # Step the environment
-        obs, reward, done, truncated, info = eval_env.step(action_agent) # action_filtered is the filter output if applied, else same as action_agent
+        obs, reward, done, truncated, info = eval_env.step(action)
 
-        torques.append(action_agent)
+        torques.append(action.copy())
         rewards.append(reward)
         
         # Render the environment and store the frame for video
@@ -493,16 +493,16 @@ def plot_for_report(simulation_data: dict, time_end=300):
     ax1.legend(loc="lower center", bbox_to_anchor=(0.5, 0.2), fontsize=6)
     
     # cut time and data
-    times = times[:int(time_end/dt)]
-    q_0 = q_0[:int(time_end/dt)]
-    q_1 = q_1[:int(time_end/dt)]
-    q_2 = q_2[:int(time_end/dt)]
-    q_3 = q_3[:int(time_end/dt)]
-    omega_x = omega_x[:int(time_end/dt)]
-    omega_y = omega_y[:int(time_end/dt)]
-    omega_z = omega_z[:int(time_end/dt)]
-    torques_array = torques_array[:int(time_end/dt)]
-    margin_angles_koz = margin_angles_koz[:int(time_end/dt)]
+    times = times[:int(time_end/Constants.TIME_DELTA)]
+    q_0 = q_0[:int(time_end/Constants.TIME_DELTA)]
+    q_1 = q_1[:int(time_end/Constants.TIME_DELTA)]
+    q_2 = q_2[:int(time_end/Constants.TIME_DELTA)]
+    q_3 = q_3[:int(time_end/Constants.TIME_DELTA)]
+    omega_x = omega_x[:int(time_end/Constants.TIME_DELTA)]
+    omega_y = omega_y[:int(time_end/Constants.TIME_DELTA)]
+    omega_z = omega_z[:int(time_end/Constants.TIME_DELTA)]
+    torques_array = torques_array[:int(time_end/Constants.TIME_DELTA)]
+    margin_angles_koz = margin_angles_koz[:int(time_end/Constants.TIME_DELTA)]
 
     # figure for attitude, angular velocity, torque and KOZ margin
     fig2 = plt.figure(figsize=(6, 6))
@@ -563,7 +563,7 @@ if __name__ == "__main__":
         Config.Visualization.MAX_HALF_ANGLE_KOZ
     ]
 
-    eval_env = create_evaluation_env(INITIAL_STATE, Config.Visualization.USE_SAFETY_FILTER)
+    eval_env = create_evaluation_env(INITIAL_STATE)
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True)
 
     """ Uncomment the lines below to run 1 simulation and plot the results. """

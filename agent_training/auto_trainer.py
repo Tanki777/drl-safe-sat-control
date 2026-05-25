@@ -147,14 +147,13 @@ def create_or_load_model(continue_training, model_name, env):
     return model, save_path, latest_model_path
 
 
-def do_scheduled_training(model_name, schedule, continue_training, use_safety_filter):
+def do_scheduled_training(model_name, schedule, continue_training):
     """
     Perform scheduled training based on the provided schedule and parameters.
     Args:
         model_name: Name of the model to train
         schedule: The schedule dictionary containing training phases
         continue_training: Boolean flag indicating whether to continue training an existing model
-        use_safety_filter: Integer flag indicating safety filter usage (0: no filter, 1: filter applied after training, 2: train with filter)
     """
     # Get training phases
     phases = schedule.get("phases", [])
@@ -204,7 +203,7 @@ def do_scheduled_training(model_name, schedule, continue_training, use_safety_fi
         print(f"|---Training for {timesteps_left} timesteps...")
 
         # Create the training environment
-        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name, use_safety_filter=use_safety_filter)
+        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name)
 
         # Create or load the model based on CONTINUE_TRAINING
         model, save_path, latest_model_path = create_or_load_model(continue_training, model_name, env)
@@ -232,7 +231,7 @@ if __name__ == "__main__":
     tensorboard_process = trainer.start_tensorboard()
 
     # Perform scheduled training
-    do_scheduled_training(Config.Training.MODEL_NAME, schedule, Config.Training.CONTINUE_TRAINING, Config.Training.USE_SAFETY_FILTER)
+    do_scheduled_training(Config.Training.MODEL_NAME, schedule, Config.Training.CONTINUE_TRAINING)
 
     # Stop TensorBoard server on ctrl+C
     try:

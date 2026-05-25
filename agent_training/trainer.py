@@ -195,14 +195,13 @@ def stop_tensorboard(process):
             print(f"|-----{RED_START}Error stopping TensorBoard: {e}{COLOR_END}")
 
 
-def create_environment(model_name, initial_state=None, phase_name=None, use_safety_filter=0):
+def create_environment(model_name, initial_state=None, phase_name=None):
     """
     Create the training environment
     Args:
         model_name: Name of the model for tensorboard logging
         initial_state: Optional initial state to reset the environment to
         phase_name: Optional phase name to include in monitor log filename
-        use_safety_filter: Whether to use the safety filter in the environment (0 = no filter, 1 = filter applied after training, 2 = filter applied during training)
     Returns:
         env: The created and wrapped environment
     """
@@ -217,7 +216,7 @@ def create_environment(model_name, initial_state=None, phase_name=None, use_safe
     # Create vectorized environment with 16 parallel instances
     if initial_state is not None:
         # Need to use a lambda to pass initial_state parameter
-        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state, use_safety_filter=use_safety_filter), n_envs=8, vec_env_cls=DummyVecEnv)
+        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state), n_envs=8, vec_env_cls=DummyVecEnv)
 
     else:
         env = make_vec_env(sat_env.BasiliskRWEnv, n_envs=8, vec_env_cls=DummyVecEnv)

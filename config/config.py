@@ -23,13 +23,11 @@ class Config():
     class Training():
         SCHEDULE_FILE_NAME = config_data["training"]["SCHEDULE_FILE_NAME"]
         CONTINUE_TRAINING = config_data["training"]["CONTINUE_TRAINING"]
-        USE_SAFETY_FILTER = config_data["training"]["USE_SAFETY_FILTER"]
         MODEL_NAME = config_data["training"]["MODEL_NAME"]
 
     class Evaluation():
         MODEL_NAME = config_data["evaluation"]["MODEL_NAME"]
         TIMESTEP = config_data["evaluation"]["TIMESTEP"]
-        USE_SAFETY_FILTER = config_data["evaluation"]["USE_SAFETY_FILTER"]
         MAX_STEPS = config_data["evaluation"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MAX_INITIAL_ERROR_ANGLE"]
@@ -41,7 +39,6 @@ class Config():
     class Visualization():
         MODEL_NAME = config_data["visualization"]["MODEL_NAME"]
         TIMESTEP = config_data["visualization"]["TIMESTEP"]
-        USE_SAFETY_FILTER = config_data["visualization"]["USE_SAFETY_FILTER"]
         MAX_STEPS = config_data["visualization"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["visualization"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["visualization"]["MAX_INITIAL_ERROR_ANGLE"]

@@ -18,7 +18,7 @@ if _drl_repo_dir not in sys.path:
 
 
 from config.config import Config
-from agent_training.environment import SatDynEnv, BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_angular_velocity_wheels
+from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_angular_velocity_wheels
 
 
 def create_simulation_env(initial_state):
