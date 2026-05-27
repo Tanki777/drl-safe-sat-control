@@ -111,8 +111,7 @@ def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_na
         "times": times,
         "normal_vector_koz": normal_vector_koz,
         "half_angle_koz": half_angle_koz,
-        # "margin_angles_koz": states_array[:, 20]*scale_margin_koz*180/np.pi,
-        "margin_angles_koz": torques_array[:,0],
+        "margin_angles_koz": states_array[:, 10]*scale_margin_koz*180/np.pi,
         "min_margin_koz": min_margin_koz,
         "cnt_Koz_violations": cnt_Koz_violations
         }
@@ -563,7 +562,7 @@ if __name__ == "__main__":
         Config.Visualization.MAX_HALF_ANGLE_KOZ
     ]
 
-    eval_env = create_evaluation_env(INITIAL_STATE)
+    eval_env = create_evaluation_env(INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP)
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True)
 
     """ Uncomment the lines below to run 1 simulation and plot the results. """

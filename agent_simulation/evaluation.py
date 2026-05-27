@@ -15,6 +15,7 @@ if _drl_repo_dir not in sys.path:
     sys.path.insert(0, _drl_repo_dir)
 
 from stable_baselines3 import SAC
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from agent_training.constants import Constants
 from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz
@@ -55,7 +56,7 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(initial_state):
+def create_evaluation_env(initial_state, model_name, timestep):
     """
     Create the evaluation environment.
     Args:
@@ -63,7 +64,13 @@ def create_evaluation_env(initial_state):
     Returns:
         eval_env: The created evaluation environment.
     """
-    eval_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)
+    vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}.pkl"
+
+    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)])
+    eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
+    eval_env.training = False  # Set to evaluation mode (no normalization updates)
+    eval_env.norm_reward = False  # Do not normalize rewards during evaluation
+
     return eval_env
 
 
@@ -85,7 +92,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     model = load_agent(model_name, timestep)
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(initial_state)
+    eval_env = create_evaluation_env(initial_state, model_name, timestep)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -139,7 +146,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
             "times": times,
             "normal_vector_koz": eval_env.normal_vector_koz,
             "half_angle_koz": eval_env.half_angle_koz,
-            "margin_angles_koz": states_array[:, 20]*scale_margin_koz*180/np.pi,
+            "margin_angles_koz": states_array[:, 10]*scale_margin_koz*180/np.pi,
             "min_margin_koz": eval_env.min_margin_koz,
             "cnt_Koz_violations": eval_env.entered_koz_count
         }
@@ -453,7 +460,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8)
     t_end = time.time()
 
     print()
