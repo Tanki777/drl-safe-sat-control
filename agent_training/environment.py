@@ -134,11 +134,11 @@ def MRPToQuat(sigma):
     quat = R.as_quat(scalar_first=True)
     return quat
 
-def reward_function(obs, _q0_prev, torque, torque_prev):
-    q0_current = obs[0]
-    ang_vel_sat_x = obs[4]
-    ang_vel_sat_y = obs[5]
-    ang_vel_sat_z = obs[6]
+def reward_function(state, _q0_prev, torque, torque_prev, phase):
+    q0_current = state[0]
+    ang_vel_sat_x = state[4]
+    ang_vel_sat_y = state[5]
+    ang_vel_sat_z = state[6]
     q0_prev = _q0_prev
     torque_1 = torque[0]
     torque_2 = torque[1]
@@ -146,7 +146,7 @@ def reward_function(obs, _q0_prev, torque, torque_prev):
     torque_1_prev = torque_prev[0]
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
-    margin_koz = 0
+    margin_koz = state[10]
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -228,11 +228,11 @@ def reward_function(obs, _q0_prev, torque, torque_prev):
 
     # Penalty for entering / being close to keep out zone
     r5 = 0.0
-    # if phase == 2:
-    #     if margin_koz <= 0.0:
-    #         r5 = -1.0
-    #     else:
-    #         r5 = -1.0*math.exp(-66.0*margin_koz)
+    if phase == 2:
+        if margin_koz <= 0.0:
+            r5 = -1.0
+        else:
+            r5 = -1.0*math.exp(-66.0*margin_koz)
 
     return r_total + r5
 
@@ -266,7 +266,7 @@ class BasiliskRWEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-1,
             high=1,
-            shape=(10,),   # [quat(4), omega_BN_B(3), wheel_speed(3)]
+            shape=(11,),   # [quat(4), omega_BN_B(3), wheel_speed(3), margin_koz(1)]
             dtype=np.float32,
         )
 
@@ -415,7 +415,9 @@ class BasiliskRWEnv(gym.Env):
         quat = MRPToQuat(sigma)
         quat = np.array(quat, dtype=np.float32)
 
-        return np.concatenate([quat, omega, omega_rw]).astype(np.float32)
+        margin_koz = calc_margin_koz(quat, self.normal_vector_koz, self.half_angle_koz)
+
+        return np.concatenate([quat, omega, omega_rw, np.array([margin_koz])]).astype(np.float32)
 
     def _apply_action(self, action):
         wheel_motor_torque = (
@@ -535,7 +537,7 @@ class BasiliskRWEnv(gym.Env):
         # Calculate margin angle to keep out zone
         margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
 
-        self.state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
+        self.state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial, np.array([margin_koz])))
 
         self.torque_prev = np.zeros(3, dtype=np.float32)
 
@@ -546,7 +548,7 @@ class BasiliskRWEnv(gym.Env):
         self.episode_torques_prev = []
         self.settled = False
         self.settling_time = -1
-        self.min_margin_koz = 10.0
+        self.min_margin_koz = np.pi
         self.entered_koz_count = 0
 
         # Update min margin koz angle
@@ -561,6 +563,7 @@ class BasiliskRWEnv(gym.Env):
         obs = self.state.copy()
         obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
         obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
+        obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
         obs = obs.astype(np.float32)
 
         self._build_basilisk_sim(q_array_initial, omega_initial, wheel_velocities_initial)
@@ -580,12 +583,13 @@ class BasiliskRWEnv(gym.Env):
 
         self.state = self._get_state()
         
-        reward = reward_function(self.state, q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev)
+        reward = reward_function(self.state, q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE)
 
         # Normalize observation
         obs = self.state.copy()
         obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
         obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
+        obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
         obs = obs.astype(np.float32)
 
         self.episode_torques.append(np.linalg.norm(action * Constants.TORQUE_WHEEL_MAX))
