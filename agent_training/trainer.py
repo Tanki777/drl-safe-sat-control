@@ -245,7 +245,7 @@ def create_environment(model_name, initial_state=None, phase_name=None):
     else:
         env = make_vec_env(sat_env.BasiliskRWEnv, n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
     
-    env = VecNormalize(env)
+    #env = VecNormalize(env)
 
     return env
 
@@ -279,13 +279,13 @@ def create_or_load_model(env, continue_training, model_name, log_path):
 
     # Setting the path to save the model
     save_path = os.path.join(models_path, model_name)
-    latest_model_path = os.path.join(models_path, f"{model_name}_latest.zip")
+    latest_model_path = os.path.join(models_path, model_name, f"{model_name}_latest.zip")
 
     # Setting the path to save the replay buffer
-    latest_replay_buffer_path = os.path.join(replay_buffer_path, f"{model_name}_latest.pkl")
+    latest_replay_buffer_path = os.path.join(replay_buffer_path, model_name, f"{model_name}_latest.pkl")
 
     # Setting the path to save the VecNormalize data
-    latest_norm_path = os.path.join(models_path, f"{model_name}_latest_vecnormalize.pkl")
+    latest_norm_path = os.path.join(models_path, model_name, f"{model_name}_latest_vecnormalize.pkl")
 
     print("|")
     print(f"|---{YELLOW_START}Creating/Loading the agent...{COLOR_END}")
@@ -297,6 +297,7 @@ def create_or_load_model(env, continue_training, model_name, log_path):
         try:
             # Load VecNormalize data into env
             env = VecNormalize.load(latest_norm_path, env)
+            env.norm_reward = False
 
             model = SAC.load(latest_model_path, device=Config.General.DEVICE)
             model.set_env(env) 
@@ -324,8 +325,12 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     # Create new model if not loading existing one
     if not continue_training or not os.path.exists(latest_model_path):
         print(f"|-----{YELLOW_START}Creating new model from scratch...{COLOR_END}")
-        model = SAC("MlpPolicy", env, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1, verbose=1, device=Config.General.DEVICE,
-                    tensorboard_log=log_path, ent_coef='auto', seed=2000)  # Use absolute path for consistency
+
+        # Add normalization wrapper
+        env = VecNormalize(env, norm_reward=False)
+
+        model = SAC("MlpPolicy", env, learning_rate=3e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, verbose=1, device=Config.General.DEVICE,
+                    tensorboard_log=log_path, ent_coef='auto', seed=1000)  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
 
@@ -389,21 +394,21 @@ def save_model(model, model_name, save_latest=True):
     # Save normalization data for the VecNormalize wrapper
     if isinstance(model.get_env(), VecNormalize):
         norm_path = os.path.join(models_path, model_name, f"{model_name}_{model.num_timesteps}_vecnormalize.pkl")
-        model.get_env().save(norm_path)
+        VecNormalize.save(model.get_env(), norm_path)
         print(f"|-----{GREEN_START}VecNormalize data saved to: {norm_path}{COLOR_END}")
 
         if save_latest:
             latest_norm_path = os.path.join(models_path, model_name, f"{model_name}_latest_vecnormalize.pkl")
-            model.get_env().save(latest_norm_path)
+            VecNormalize.save(model.get_env(), latest_norm_path)
             print(f"|-----{GREEN_START}Latest VecNormalize data saved to: {latest_norm_path}{COLOR_END}")
     
     if save_latest:
         # Save as latest model (for next session)
-        latest_model_path = os.path.join(models_path, f"{model_name}_latest")
+        latest_model_path = os.path.join(models_path, model_name, f"{model_name}_latest")
         model.save(latest_model_path)
 
         # Save replay buffer as latest
-        latest_replay_path = os.path.join(replay_buffer_path, f"{model_name}_latest")
+        latest_replay_path = os.path.join(replay_buffer_path, model_name, f"{model_name}_latest")
         model.save_replay_buffer(latest_replay_path)
     
     print(f"|-----{GREEN_START}Model saved to:{COLOR_END}")

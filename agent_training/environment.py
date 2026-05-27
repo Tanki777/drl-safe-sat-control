@@ -264,8 +264,8 @@ class BasiliskRWEnv(gym.Env):
         )
 
         self.observation_space = spaces.Box(
-            low=-1,
-            high=1,
+            low=-np.inf,
+            high=np.inf,
             shape=(11,),   # [quat(4), omega_BN_B(3), wheel_speed(3), margin_koz(1)]
             dtype=np.float32,
         )
@@ -561,9 +561,9 @@ class BasiliskRWEnv(gym.Env):
 
         # Normalize observation
         obs = self.state.copy()
-        obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
-        obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
-        obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
+        #obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
+        #obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
+        #obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
         obs = obs.astype(np.float32)
 
         self._build_basilisk_sim(q_array_initial, omega_initial, wheel_velocities_initial)
@@ -587,9 +587,9 @@ class BasiliskRWEnv(gym.Env):
 
         # Normalize observation
         obs = self.state.copy()
-        obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
-        obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
-        obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
+        #obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
+        #obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
+        #obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
         obs = obs.astype(np.float32)
 
         self.episode_torques.append(np.linalg.norm(action * Constants.TORQUE_WHEEL_MAX))

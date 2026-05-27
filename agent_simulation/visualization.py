@@ -52,10 +52,10 @@ def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_na
     rewards = []
     frames = []
 
-    obs, _ = eval_env.reset()
+    obs = eval_env.reset()
     done = False
-    normal_vector_koz = eval_env.normal_vector_koz
-    half_angle_koz = eval_env.half_angle_koz
+    normal_vector_koz = eval_env.get_attr("normal_vector_koz")[0]
+    half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
     min_margin_koz = 0
     cnt_Koz_violations = 0
 
@@ -63,21 +63,23 @@ def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_na
     while not done:
         action, _states = model.predict(obs, deterministic=True)
 
-        states.append(obs.copy())
+        states.append(eval_env.get_original_obs()[0])
 
         # Step the environment
-        obs, reward, done, truncated, info = eval_env.step(action)
+        obs, reward, done, info = eval_env.step(action)
 
-        torques.append(action.copy())
-        rewards.append(reward)
+        #print(done)
+
+        torques.append(action[0].copy())
+        rewards.append(reward[0])
         
         # Render the environment and store the frame for video
         if create_video:
             frame = eval_env.render()
             frames.append(frame)
 
-        min_margin_koz = eval_env.min_margin_koz
-        cnt_Koz_violations = eval_env.entered_koz_count
+        min_margin_koz = eval_env.get_attr("min_margin_koz")[0]
+        cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
 
     eval_env.close()
 
@@ -104,14 +106,17 @@ def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_na
         "quaternion": states_array[:, :4],
         "quaternion_norm": norm_q,
         "torques": torques_array,
-        "omega": states_array[:, 4:7]*scale_angular_velocity_sat,
-        "omega_wheels": states_array[:, 7:10]*scale_angular_velocity_wheels,
+        #"omega": states_array[:, 4:7]*scale_angular_velocity_sat,
+        "omega": states_array[:, 4:7],
+        "omega_wheels": states_array[:, 7:10],
+        #"omega_wheels": states_array[:, 7:10]*scale_angular_velocity_wheels,
         "rewards": rewards_array,
         "cumulative_rewards": cumulative_rewards,
         "times": times,
         "normal_vector_koz": normal_vector_koz,
         "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": states_array[:, 10]*scale_margin_koz*180/np.pi,
+        #"margin_angles_koz": states_array[:, 10]*scale_margin_koz*180/np.pi,
+        "margin_angles_koz": states_array[:, 10]*180/np.pi,
         "min_margin_koz": min_margin_koz,
         "cnt_Koz_violations": cnt_Koz_violations
         }

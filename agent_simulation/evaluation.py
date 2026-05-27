@@ -64,7 +64,7 @@ def create_evaluation_env(initial_state, model_name, timestep):
     Returns:
         eval_env: The created evaluation environment.
     """
-    vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}.pkl"
+    vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
 
     eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)])
     eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
