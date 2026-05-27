@@ -16,7 +16,7 @@ if _drl_repo_dir not in sys.path:
     sys.path.insert(0, _drl_repo_dir)
 
 from stable_baselines3 import SAC
-from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecNormalize
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import HParam
@@ -213,25 +213,7 @@ def create_environment(model_name, initial_state=None, phase_name=None):
     if not os.path.exists(monitor_dir):
         os.makedirs(monitor_dir)
 
-    # Create vectorized environment with 16 parallel instances
-    if initial_state is not None:
-        # Need to use a lambda to pass initial_state parameter
-        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state), n_envs=8, vec_env_cls=DummyVecEnv)
-
-    else:
-        env = make_vec_env(sat_env.BasiliskRWEnv, n_envs=8, vec_env_cls=DummyVecEnv)
-    
-    # If phase name is available, use it in the monitor log filename
-    if phase_name:
-        phase_name = phase_name.replace(" ", "_").replace(":", "")  # whitespace and colon can cause issues in filenames
-        monitor_log_file = os.path.join(monitor_dir, f"{model_name}_{phase_name}")
-    
-    # If phase name not available, use timestamp
-    else:
-        timestamp = int(time.time())
-        monitor_log_file = os.path.join(monitor_dir, f"{model_name}_{timestamp}")
-    
-    # Track custom metrics in VecMonitor
+    # Track custom metrics in monitor wrapper
     custom_info_keywords = (
         "custom_metrics/initial_error_angle",
         "custom_metrics/initial_angular_velocity", 
@@ -242,9 +224,28 @@ def create_environment(model_name, initial_state=None, phase_name=None):
         "custom_metrics/max_torque_prev",
         "custom_metrics/settled",
     )
+
+    # If phase name is available, use it in the monitor log filename
+    if phase_name:
+        phase_name = phase_name.replace(" ", "_").replace(":", "")  # whitespace and colon can cause issues in filenames
+        monitor_log_file = os.path.join(monitor_dir, f"{model_name}_{phase_name}")
     
-    # Wrap environment with VecMonitor to log episode info
-    env = VecMonitor(env, filename=monitor_log_file, info_keywords=custom_info_keywords)
+    # If phase name not available, use timestamp
+    else:
+        timestamp = int(time.time())
+        monitor_log_file = os.path.join(monitor_dir, f"{model_name}_{timestamp}")
+
+    # Create vectorized environment
+    monitor_wrapper_kwargs = dict(info_keywords=custom_info_keywords)
+
+    if initial_state is not None:
+        # Need to use a lambda to pass initial_state parameter
+        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+
+    else:
+        env = make_vec_env(sat_env.BasiliskRWEnv, n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+    
+    env = VecNormalize(env)
 
     return env
 
@@ -283,6 +284,9 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     # Setting the path to save the replay buffer
     latest_replay_buffer_path = os.path.join(replay_buffer_path, f"{model_name}_latest.pkl")
 
+    # Setting the path to save the VecNormalize data
+    latest_norm_path = os.path.join(models_path, f"{model_name}_latest_vecnormalize.pkl")
+
     print("|")
     print(f"|---{YELLOW_START}Creating/Loading the agent...{COLOR_END}")
     
@@ -291,6 +295,9 @@ def create_or_load_model(env, continue_training, model_name, log_path):
         print(f"|-----{YELLOW_START}Loading existing model from: {latest_model_path}{COLOR_END}")
 
         try:
+            # Load VecNormalize data into env
+            env = VecNormalize.load(latest_norm_path, env)
+
             model = SAC.load(latest_model_path, device=Config.General.DEVICE)
             model.set_env(env) 
             print(f"|-----{GREEN_START}Successfully loaded existing model.{COLOR_END}")
@@ -318,7 +325,7 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     if not continue_training or not os.path.exists(latest_model_path):
         print(f"|-----{YELLOW_START}Creating new model from scratch...{COLOR_END}")
         model = SAC("MlpPolicy", env, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1, verbose=1, device=Config.General.DEVICE,
-                    tensorboard_log=log_path, ent_coef='auto', seed=1000)  # Use absolute path for consistency
+                    tensorboard_log=log_path, ent_coef='auto', seed=2000)  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
 
@@ -378,6 +385,17 @@ def save_model(model, model_name, save_latest=True):
     _replay_path = os.path.join(replay_buffer_path, model_name)
     backup_path_replay = os.path.join(_replay_path, f"{model_name}_{model.num_timesteps}")
     model.save_replay_buffer(backup_path_replay)
+
+    # Save normalization data for the VecNormalize wrapper
+    if isinstance(model.get_env(), VecNormalize):
+        norm_path = os.path.join(models_path, model_name, f"{model_name}_{model.num_timesteps}_vecnormalize.pkl")
+        model.get_env().save(norm_path)
+        print(f"|-----{GREEN_START}VecNormalize data saved to: {norm_path}{COLOR_END}")
+
+        if save_latest:
+            latest_norm_path = os.path.join(models_path, model_name, f"{model_name}_latest_vecnormalize.pkl")
+            model.get_env().save(latest_norm_path)
+            print(f"|-----{GREEN_START}Latest VecNormalize data saved to: {latest_norm_path}{COLOR_END}")
     
     if save_latest:
         # Save as latest model (for next session)
