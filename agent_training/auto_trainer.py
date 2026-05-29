@@ -82,7 +82,7 @@ def load_model_metadata(model_name):
     return metadata
 
 
-def create_model_metadata(model_name, schedule):
+def create_model_metadata(model_name, schedule, model):
     """
     Create model metadata based on the schedule.
     Args:
@@ -96,6 +96,35 @@ def create_model_metadata(model_name, schedule):
         "model_name": model_name,
         "schedule_name": schedule.get("name", ""),
     }
+
+    # Add hyperparameters to metadata
+    hparams = {
+        "policy": model.policy.__class__.__name__,
+        "learning rate": model.learning_rate,
+        "buffer size": model.buffer_size,
+        "learning starts": model.learning_starts,
+        "batch size": model.batch_size,
+        "tau": model.tau,
+        "gamma": model.gamma,
+        "train freq": model.train_freq.__class__.__name__ if model.train_freq is not None else None,
+        "gradient steps": model.gradient_steps,
+        "action noise": model.action_noise.__class__.__name__ if model.action_noise is not None else None,
+        "replay buffer class": model.replay_buffer_class.__name__,
+        "replay buffer kwargs": model.replay_buffer_kwargs,
+        "optimize memory usage": model.optimize_memory_usage,
+        "n steps": model.n_steps,
+        "ent coef": model.ent_coef,
+        "target update interval": model.target_update_interval,
+        "target entropy": model.target_entropy,
+        "use sde": model.use_sde,
+        "sde sample freq": model.sde_sample_freq,
+        "use sde at warmup": model.use_sde_at_warmup,
+        "policy kwargs": model.policy_kwargs,
+        "seed": model.seed,
+        "device": model.device.type if model.device is not None else None
+    }
+
+    metadata["hyperparameters"] = hparams
 
     # Parse phases from schedule
     phases = []
@@ -159,12 +188,6 @@ def do_scheduled_training(model_name, schedule, continue_training):
     phases = schedule.get("phases", [])
     phase_count = len(phases)
 
-    # Get metadata
-    if continue_training:
-        metadata = load_model_metadata(model_name)
-    else:
-        metadata = create_model_metadata(model_name, schedule)
-
     # Perform training for each phase
     for phase_index, phase in enumerate(phases):
         # After the second phase, always continue training
@@ -182,6 +205,20 @@ def do_scheduled_training(model_name, schedule, continue_training):
             phase.get("min_half_angle_koz", 0.0),
             phase.get("max_half_angle_koz", 0.0)
         ]
+
+        # Create the training environment
+        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name)
+
+        # Create or load the model based on CONTINUE_TRAINING
+        model, save_path, latest_model_path = create_or_load_model(continue_training, model_name, env)
+
+        # Get metadata
+        if continue_training:
+            metadata = load_model_metadata(model_name)
+        else:
+            metadata = create_model_metadata(model_name, schedule, model)
+            save_model_metadata(model_name, metadata)
+
         timesteps_left = metadata["phases"][phase_index].get("timesteps_left", timesteps)
 
         if timesteps <= 0:
@@ -201,12 +238,6 @@ def do_scheduled_training(model_name, schedule, continue_training):
         
         print("|")
         print(f"|---Training for {timesteps_left} timesteps...")
-
-        # Create the training environment
-        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name)
-
-        # Create or load the model based on CONTINUE_TRAINING
-        model, save_path, latest_model_path = create_or_load_model(continue_training, model_name, env)
 
         # Train the agent model for the specified timesteps
         model = trainer.train_agent(model, timesteps_left, 500, 100_000, model_name)
