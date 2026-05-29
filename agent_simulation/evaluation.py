@@ -15,6 +15,7 @@ if _drl_repo_dir not in sys.path:
     sys.path.insert(0, _drl_repo_dir)
 
 from stable_baselines3 import SAC
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from agent_training.constants import Constants
 from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz
@@ -55,7 +56,7 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(initial_state):
+def create_evaluation_env(initial_state, model_name, timestep):
     """
     Create the evaluation environment.
     Args:
@@ -63,7 +64,13 @@ def create_evaluation_env(initial_state):
     Returns:
         eval_env: The created evaluation environment.
     """
-    eval_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)
+    vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
+
+    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)])
+    eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
+    eval_env.training = False  # Set to evaluation mode (no normalization updates)
+    eval_env.norm_reward = False  # Do not normalize rewards during evaluation
+
     return eval_env
 
 
@@ -85,7 +92,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     model = load_agent(model_name, timestep)
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(initial_state)
+    eval_env = create_evaluation_env(initial_state, model_name, timestep)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -102,7 +109,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
         torques = []
         rewards = []
 
-        obs, _ = eval_env.reset()
+        obs = eval_env.reset()
         done = False
         reward_cum = 0 # for this episode
 
@@ -110,17 +117,20 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
         while not done:
             action, _states = model.predict(obs, deterministic=True)
 
-            states.append(obs.copy())
+            states.append(eval_env.get_original_obs()[0])
 
             # Step the environment
-            obs, reward, done, truncated, info = eval_env.step(action)
-            torques.append(action.copy())
-            rewards.append(reward)
+            obs, reward, done, info = eval_env.step(action)
+
+            #print(done)
+
+            torques.append(action[0].copy())
+            rewards.append(reward[0])
 
             # Add up reward
             reward_cum += reward
 
-        if eval_env.entered_koz_count > 0:
+        if eval_env.get_attr("entered_koz_count")[0] > 0:
             koz_violation_episodes += 1
 
         # Convert to numpy arrays
@@ -133,29 +143,29 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
             "quaternion": states_array[:, :4],
             "quaternion_norm": np.linalg.norm(states_array[:, :4], axis=1),
             "torques": torques_array,
-            "omega": states_array[:, 4:7]*scale_angular_velocity_sat,
+            "omega": states_array[:, 4:7],
             "rewards": rewards_array,
             "cumulative_rewards": np.cumsum(rewards_array),
             "times": times,
-            "normal_vector_koz": eval_env.normal_vector_koz,
-            "half_angle_koz": eval_env.half_angle_koz,
-            "margin_angles_koz": states_array[:, 20]*scale_margin_koz*180/np.pi,
-            "min_margin_koz": eval_env.min_margin_koz,
-            "cnt_Koz_violations": eval_env.entered_koz_count
+            "normal_vector_koz": eval_env.get_attr("normal_vector_koz")[0],
+            "half_angle_koz": eval_env.get_attr("half_angle_koz")[0],
+            "margin_angles_koz": states_array[:, 10]*180/np.pi,
+            "min_margin_koz": eval_env.get_attr("min_margin_koz")[0],
+            "cnt_Koz_violations": eval_env.get_attr("entered_koz_count")[0]
         }
 
         simulation_data.append(episode_data)
         
         # Add episode results to evaluation lists
-        min_margins_koz.append(eval_env.min_margin_koz*180/np.pi)  # in degrees
-        cnts_koz_violations.append(eval_env.entered_koz_count)
+        min_margins_koz.append(eval_env.get_attr("min_margin_koz")[0]*180/np.pi)  # in degrees
+        cnts_koz_violations.append(eval_env.get_attr("entered_koz_count")[0])
         ep_rewards.append(reward_cum)
 
-        q0_final = obs[0]
+        q0_final = states_array[-1, 0]  # final quaternion scalar part
         err_angle_final = 2 * np.arccos(np.abs(q0_final)) * 180/np.pi  # final rotation angle in degrees
         err_angles_final.append(err_angle_final)
 
-        ang_vel_final = obs[4:7] * scale_angular_velocity_sat * 180/np.pi  # final angular velocity in deg/s
+        ang_vel_final = states_array[-1, 4:7] * 180/np.pi  # final angular velocity in deg/s
         ang_vel_final_mag = np.sqrt(ang_vel_final[0]**2 + ang_vel_final[1]**2 + ang_vel_final[2]**2) # magnitude
         ang_vels_final.append(ang_vel_final_mag)
 
@@ -447,13 +457,13 @@ if __name__ == "__main__":
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
-    #loaded = load_evaluation_data("rewPrak_sched_180_2_7400000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_filter[0]_ep[1000]_2026-04-24-06-35-37.npz")
-    #calc_metrics(loaded)
+    loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_seed1000_sched_180_3000000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[10000]_2026-05-27-20-52-10.npz")
+    calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    #evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8)
     t_end = time.time()
 
     print()
