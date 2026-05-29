@@ -110,24 +110,29 @@ class CustomCallback(BaseCallback):
         for metric_name, values in self.custom_metrics.items():
             if values:  # Only log if we have data
                 if metric_name == "settling_time":
-                    # For settling_time, ignore non settled case (-1) when calculating mean
-                    non_zero_values = [v for v in values if v >= 0]
-                    if non_zero_values:
-                        mean_value = sum(non_zero_values) / len(non_zero_values)
+                    # For settling_time, ignore non settled case when calculating mean
+                    non_none_values = [v for v in values if v]
+                    if non_none_values:
+                        mean_value = sum(non_none_values) / len(non_none_values)
                     else:
-                        mean_value = 0.0
+                        mean_value = None
                 elif metric_name == "min_margin_koz":
                     # For min_margin_koz, take the minimum value
                     mean_value = min(values)
                 else:
                     mean_value = sum(values) / len(values)
                 # Log to TensorBoard using the logger
-                self.logger.record(f"custom/{metric_name}_mean", mean_value)
+                if mean_value:
+                    self.logger.record(f"custom/{metric_name}_mean", mean_value)
             
                 # Log max values
                 if metric_name in ["final_error_angle", "settling_time", "initial_error_angle"]:
-                    max_value = max(values)
-                    self.logger.record(f"custom/{metric_name}_max", max_value)
+                    non_none_values = [v for v in values if v]
+
+                    # Only log max if there is at least one non-None value
+                    if non_none_values:
+                        max_value = max(non_none_values)
+                        self.logger.record(f"custom/{metric_name}_max", max_value)
 
                 # Clear the accumulated values
                 self.custom_metrics[metric_name] = []
