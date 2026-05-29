@@ -71,7 +71,7 @@ class CustomCallback(BaseCallback):
                 "algorithm": self.model.__class__.__name__,
                 "learning rate": self.model.learning_rate,
                 "tau": self.model.tau,
-                "gamma": self.model.gamma,
+                "gamma": self.model.gamma
         }
         
         # Tensorbaord will find & display metrics from the SCALARS tab
@@ -329,8 +329,8 @@ def create_or_load_model(env, continue_training, model_name, log_path):
         # Add normalization wrapper
         env = VecNormalize(env, norm_reward=False)
 
-        model = SAC("MlpPolicy", env, learning_rate=3e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, verbose=1, device=Config.General.DEVICE,
-                    tensorboard_log=log_path, ent_coef='auto', seed=1000)  # Use absolute path for consistency
+        model = SAC("MlpPolicy", env, learning_rate=3e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=1,verbose=1, device=Config.General.DEVICE,
+                    tensorboard_log=log_path, seed=1000, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
 
