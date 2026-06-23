@@ -8,10 +8,7 @@ import os
 import sys
 import matplotlib.pyplot as plt
 import matplotlib
-from stable_baselines3 import SAC
 import numpy as np
-import imageio.v2 as imageio
-import time
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,98 +24,10 @@ video_dir = os.path.join(repo_parent_dir, "videos")
 if not os.path.exists(video_dir):
     os.makedirs(video_dir)
 
-from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz, scale_angular_velocity_wheels
+
 from agent_training.constants import Constants
-from agent_simulation.evaluation import create_evaluation_env, load_agent
+from agent_simulation.evaluation import create_evaluation_env, load_agent, load_evaluation_data, simulate_episode
 from config.config import Config
-
-
-def simulate_agent(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False):
-    """
-    Simulate the agent in the evaluation environment.
-    Args:
-        model: The trained model.
-        eval_env: The evaluation environment.
-        max_steps: Maximum number of steps to simulate.
-        model_name: The name of the model being simulated.
-        create_video: Whether to create a video of the simulation.
-    Returns:
-        simulation_data: A dictionary containing the simulation data for plotting.
-    """
-    # Arrays for storing data
-    times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
-    states = []
-    torques = []
-    rewards = []
-    frames = []
-
-    obs = eval_env.reset()
-    done = False
-    normal_vector_koz = eval_env.get_attr("normal_vector_koz")[0]
-    half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
-    min_margin_koz = 0
-    cnt_Koz_violations = 0
-
-    # Simulation loop
-    while not done:
-        action, _states = model.predict(obs, deterministic=True)
-
-        states.append(eval_env.get_original_obs()[0])
-
-        # Step the environment
-        obs, reward, done, info = eval_env.step(action)
-
-        #print(done)
-
-        torques.append(action[0].copy())
-        rewards.append(reward[0])
-        
-        # Render the environment and store the frame for video
-        if create_video:
-            frame = eval_env.render()
-            frames.append(frame)
-
-        min_margin_koz = eval_env.get_attr("min_margin_koz")[0]
-        cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
-
-    eval_env.close()
-
-    # Save as MP4
-    timestamp = time.time()
-    output_path = os.path.join(video_dir, f"{model_name}_{timestamp}.mp4")
-
-    if create_video:
-        imageio.mimsave(output_path, frames, fps=30)
-        print(f"Saved video to {output_path}")
-
-    # Extract the solution for attitude (in terms of quaternion) and angular velocity
-    states_array = np.array(states)
-    torques_array = np.array(torques) * scale_torque
-    rewards_array = np.array(rewards)
-
-    # Calculate cumulative reward
-    cumulative_rewards = np.cumsum(rewards_array)
-
-    # store the norm of quaternions
-    norm_q = np.linalg.norm(states_array[:, :4], axis=1)
-
-    simulation_data = {
-        "quaternion": states_array[:, :4],
-        "quaternion_norm": norm_q,
-        "torques": torques_array,
-        "omega": states_array[:, 4:7],
-        "omega_wheels": states_array[:, 7:10],
-        "rewards": rewards_array,
-        "cumulative_rewards": cumulative_rewards,
-        "times": times,
-        "normal_vector_koz": normal_vector_koz,
-        "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": states_array[:, 10]*180/np.pi,
-        "min_margin_koz": min_margin_koz,
-        "cnt_Koz_violations": cnt_Koz_violations
-        }
-    
-    return simulation_data
 
 
 def print_result(phi_final, omega_final, cumulative_reward_final):
@@ -568,13 +477,13 @@ if __name__ == "__main__":
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True)
 
     """ Uncomment the lines below to run 1 simulation and plot the results. """
-    simulation_data = simulate_agent(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO)
+    simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO)
     plot_actual_attitude(simulation_data)
     #plot_for_report(simulation_data, time_end=300)
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
         loaded contains ALL episodes, therefore in loaded[] should be the index of the episode you want to plot.
     """
-    #loaded = load_evaluation_data("evaluation_test2.npz")
+    #loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_bothPhases_3000000_[90.0, 120.0, 0.0, 0.01, 3000, 25.0, 30.0]_ep[100]_2026-06-23-17-33-58.npz")
     #plot_actual_attitude(loaded[2])
     #plot_for_report(loaded[0],time_end=300)

@@ -8,6 +8,7 @@ import time
 import os
 import sys
 import random
+import imageio.v2 as imageio
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,13 +19,18 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from agent_training.constants import Constants
-from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_margin_koz
+from agent_training.environment import BasiliskRWEnv, scale_torque
 from config.config import Config
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
 repo_parent_dir = os.path.dirname(repo_dir)
 eval_data_dir = os.path.join(repo_parent_dir, "evaluation_data")
+video_dir = os.path.join(repo_parent_dir, "videos")
+
+# Create video directory if it doesn't exist
+if not os.path.exists(video_dir):
+    os.makedirs(video_dir)
 
 # Create evaluation data directory if it doesn't exist
 if not os.path.exists(eval_data_dir):
@@ -74,6 +80,94 @@ def create_evaluation_env(initial_state, model_name, timestep):
     return eval_env
 
 
+def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False):
+    """
+    Simulate the agent in the evaluation environment for one episode.
+    Args:
+        model: The trained model.
+        eval_env: The evaluation environment.
+        max_steps: Maximum number of steps to simulate.
+        model_name: The name of the model being simulated.
+        create_video: Whether to create a video of the simulation.
+    Returns:
+        simulation_data: A dictionary containing the simulation data for plotting.
+    """
+    # Arrays for storing data
+    times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
+    states = []
+    torques = []
+    rewards = []
+    frames = []
+
+    obs = eval_env.reset()
+    done = False
+    normal_vector_koz = eval_env.get_attr("normal_vector_koz")[0]
+    half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
+    min_margin_koz = 0
+    cnt_Koz_violations = 0
+
+    # Simulation loop
+    while not done:
+        # Need to fetch env attributes BEFORE step(), otherwise if done=true --> after step() env resets and attributes are reinitialized!
+        min_margin_koz = eval_env.get_attr("min_margin_koz")[0]
+        cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
+
+        action, _states = model.predict(obs, deterministic=True)
+        states.append(eval_env.get_original_obs()[0])
+
+        # Step the environment
+        obs, reward, done, info = eval_env.step(action)
+
+        #print(done)
+
+        torques.append(action[0].copy())
+        rewards.append(reward[0])
+        
+        # Render the environment and store the frame for video
+        if create_video:
+            frame = eval_env.render()
+            frames.append(frame)
+
+    eval_env.close()
+
+    # Save as MP4
+    timestamp = time.time()
+    output_path = os.path.join(video_dir, f"{model_name}_{timestamp}.mp4")
+
+    if create_video:
+        imageio.mimsave(output_path, frames, fps=30)
+        print(f"Saved video to {output_path}")
+
+    # Extract the solution for attitude (in terms of quaternion) and angular velocity
+    states_array = np.array(states)
+    torques_array = np.array(torques) * scale_torque
+    rewards_array = np.array(rewards)
+
+    # Calculate cumulative reward
+    cumulative_rewards = np.cumsum(rewards_array)
+
+    # store the norm of quaternions
+    norm_q = np.linalg.norm(states_array[:, :4], axis=1)
+
+    simulation_data = {
+        "quaternion": states_array[:, :4],
+        "quaternion_norm": norm_q,
+        "torques": torques_array,
+        "omega": states_array[:, 4:7],
+        "omega_wheels": states_array[:, 7:10],
+        "rewards": rewards_array,
+        "cumulative_rewards": cumulative_rewards,
+        "times": times,
+        "normal_vector_koz": normal_vector_koz,
+        "half_angle_koz": half_angle_koz,
+        "margin_angles_koz": states_array[:, 10]*180/np.pi,
+        "min_margin_koz": min_margin_koz,
+        "cnt_Koz_violations": cnt_Koz_violations
+        }
+    
+    return simulation_data
+
+
 def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, worker_id: int):
     """
     Worker function to evaluate agent for a subset of episodes.
@@ -104,70 +198,29 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
 
     for episode in range(episodes):
         print(f"Worker {worker_id}: Episode {episode+1}/{episodes}...", end="\r")
-        times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
-        states = []
-        torques = []
-        rewards = []
+        
+        # Simulate one episode
+        episode_data = simulate_episode(model, eval_env, max_steps, model_name, create_video=False)
 
-        obs = eval_env.reset()
-        done = False
-        reward_cum = 0 # for this episode
-
-        # Simulation loop
-        while not done:
-            action, _states = model.predict(obs, deterministic=True)
-
-            states.append(eval_env.get_original_obs()[0])
-
-            # Step the environment
-            obs, reward, done, info = eval_env.step(action)
-
-            #print(done)
-
-            torques.append(action[0].copy())
-            rewards.append(reward[0])
-
-            # Add up reward
-            reward_cum += reward
-
-        if eval_env.get_attr("entered_koz_count")[0] > 0:
-            koz_violation_episodes += 1
-
-        # Convert to numpy arrays
-        states_array = np.array(states)
-        torques_array = np.array(torques) * scale_torque
-        rewards_array = np.array(rewards)
-
-        # Store episode data in a dictionary
-        episode_data = {
-            "quaternion": states_array[:, :4],
-            "quaternion_norm": np.linalg.norm(states_array[:, :4], axis=1),
-            "torques": torques_array,
-            "omega": states_array[:, 4:7],
-            "rewards": rewards_array,
-            "cumulative_rewards": np.cumsum(rewards_array),
-            "times": times,
-            "normal_vector_koz": eval_env.get_attr("normal_vector_koz")[0],
-            "half_angle_koz": eval_env.get_attr("half_angle_koz")[0],
-            "margin_angles_koz": states_array[:, 10]*180/np.pi,
-            "min_margin_koz": eval_env.get_attr("min_margin_koz")[0],
-            "cnt_Koz_violations": eval_env.get_attr("entered_koz_count")[0]
-        }
-
+        # Append data of this episode to all episodes data for this worker
         simulation_data.append(episode_data)
         
         # Add episode results to evaluation lists
-        min_margins_koz.append(eval_env.get_attr("min_margin_koz")[0]*180/np.pi)  # in degrees
-        cnts_koz_violations.append(eval_env.get_attr("entered_koz_count")[0])
-        ep_rewards.append(reward_cum)
+        min_margins_koz.append(episode_data["min_margin_koz"]*180/np.pi)  # in degrees
+        cnts_koz_violations.append(episode_data["cnt_Koz_violations"])
+        ep_rewards.append(episode_data["cumulative_rewards"][-1]) # episode reward
 
-        q0_final = states_array[-1, 0]  # final quaternion scalar part
+        q0_final = episode_data["quaternion"][-1, 0]  # final quaternion scalar part
         err_angle_final = 2 * np.arccos(np.abs(q0_final)) * 180/np.pi  # final rotation angle in degrees
         err_angles_final.append(err_angle_final)
 
-        ang_vel_final = states_array[-1, 4:7] * 180/np.pi  # final angular velocity in deg/s
+        ang_vel_final = episode_data["omega"][-1, :] * 180/np.pi  # final angular velocity in deg/s
         ang_vel_final_mag = np.sqrt(ang_vel_final[0]**2 + ang_vel_final[1]**2 + ang_vel_final[2]**2) # magnitude
         ang_vels_final.append(ang_vel_final_mag)
+
+        # Track number of episodes with KOZ violation
+        if episode_data["cnt_Koz_violations"] > 0:
+            koz_violation_episodes += 1
 
     eval_env.close()
     
@@ -457,13 +510,13 @@ if __name__ == "__main__":
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
-    loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_seed1000_sched_180_3000000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[10000]_2026-05-27-20-52-10.npz")
-    calc_metrics(loaded)
+    #loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_seed1000_sched_180_3000000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[10000]_2026-05-27-20-52-10.npz")
+    #calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    #evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
     t_end = time.time()
 
     print()
