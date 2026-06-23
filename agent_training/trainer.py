@@ -296,12 +296,16 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     print(f"|---{YELLOW_START}Creating/Loading the agent...{COLOR_END}")
     
     # Try to load existing model if CONTINUE_TRAINING is True
+    if continue_training and not os.path.exists(latest_model_path):
+        print(f"|-----{RED_START} Latest model path not found: {latest_model_path}")
+
     if continue_training and os.path.exists(latest_model_path):
         print(f"|-----{YELLOW_START}Loading existing model from: {latest_model_path}{COLOR_END}")
 
         try:
             # Load VecNormalize data into env
             env = VecNormalize.load(latest_norm_path, env)
+            env.training = True
             env.norm_reward = False
 
             model = SAC.load(latest_model_path, device=Config.General.DEVICE)
@@ -334,8 +338,8 @@ def create_or_load_model(env, continue_training, model_name, log_path):
         # Add normalization wrapper
         env = VecNormalize(env, norm_reward=False)
 
-        model = SAC("MlpPolicy", env, learning_rate=3e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=1,verbose=1, device=Config.General.DEVICE,
-                    tensorboard_log=log_path, seed=1000, ent_coef='auto')  # Use absolute path for consistency
+        model = SAC("MlpPolicy", env, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
+                    tensorboard_log=log_path, seed=None, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
 
