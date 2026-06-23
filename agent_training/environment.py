@@ -445,11 +445,8 @@ class BasiliskRWEnv(gym.Env):
 
         rw_factory = simIncludeRW.rwFactory()
         varRWModel = messaging.BalancedWheels
-        #maxMomentum = 0.00001722*scale_angular_velocity_wheels*2*np.pi / 60.0
-        #maxMomentum = 0.01 * 1e9
-        inertia_wheel = Constants.INERTIA_WHEEL
 
-        # Three orthogonal wheels
+        # Three orthogonal wheels, as configured in Bevo-2. Reaction wheel model: 3x Rocketlab 10 mNms-1
         RW1 = rw_factory.create(
             "custom",
             [1.0, 0.0, 0.0],
@@ -457,7 +454,6 @@ class BasiliskRWEnv(gym.Env):
             u_max=Constants.TORQUE_WHEEL_MAX,
             Omega_max=Constants.SPEED_WHEEL_MAX,
             maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            #Js= inertia_wheel,
             RWModel=varRWModel
         )
         RW2 = rw_factory.create(
@@ -467,7 +463,6 @@ class BasiliskRWEnv(gym.Env):
             u_max=Constants.TORQUE_WHEEL_MAX,
             Omega_max=Constants.SPEED_WHEEL_MAX,
             maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            #Js= inertia_wheel,
             RWModel=varRWModel
         )
         RW3 = rw_factory.create(
@@ -477,7 +472,6 @@ class BasiliskRWEnv(gym.Env):
             u_max=Constants.TORQUE_WHEEL_MAX,
             Omega_max=Constants.SPEED_WHEEL_MAX,
             maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            #Js= inertia_wheel,
             RWModel=varRWModel
         )
 
@@ -584,6 +578,17 @@ class BasiliskRWEnv(gym.Env):
         self.state = self._get_state()
         
         reward = reward_function(self.state, q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE)
+
+        # Update KOZ metrics
+        # Update min margin koz angle
+        margin_koz = self.state[10]
+       
+        if margin_koz < self.min_margin_koz:
+            self.min_margin_koz = margin_koz
+
+        # Update entered koz count
+        if margin_koz < 0.0:
+            self.entered_koz_count += 1
 
         # Normalize observation
         obs = self.state.copy()
