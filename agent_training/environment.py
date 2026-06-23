@@ -303,7 +303,7 @@ class BasiliskRWEnv(gym.Env):
         self.episode_torques = []
         self.episode_torques_prev = []
         self.settled = False
-        self.settling_time = -1  # -1 means not settled
+        self.settling_time = None  # means not settled
         self.settling_threshold_deg = 0.25  # degrees for considering "settled"
         self.settling_velocity_threshold = 0.01  # rad/s for angular velocity
         self.min_margin_koz = 0.0
@@ -541,7 +541,7 @@ class BasiliskRWEnv(gym.Env):
         self.episode_torques = []
         self.episode_torques_prev = []
         self.settled = False
-        self.settling_time = -1
+        self.settling_time = None
         self.min_margin_koz = np.pi
         self.entered_koz_count = 0
 
@@ -602,13 +602,17 @@ class BasiliskRWEnv(gym.Env):
 
         # Check settling condition
         current_error_deg = 2 * math.acos(min(max(abs(self.state[0]), 0.0), 1.0)) * 180 / np.pi
-        current_omega_mag = np.linalg.norm(self.state[4:7])
-        
-        if (not self.settled and 
-            current_error_deg < self.settling_threshold_deg and 
-            current_omega_mag < self.settling_velocity_threshold):
+        is_within_accuracy = True if current_error_deg <= self.settling_threshold_deg else False
+
+        # From unsettled to settled
+        if not self.settled and is_within_accuracy:
             self.settled = True
-            self.settling_time = self.steps * self.dt  # settling time in seconds
+            self.settling_time = self.steps * self.dt
+
+        # From settled to unsettled
+        elif self.settled and not is_within_accuracy:
+            self.settled = False
+            self.settling_time = None
 
         self.torque_prev = action * Constants.TORQUE_WHEEL_MAX  # Update previous torque for the next step
 
