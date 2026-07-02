@@ -8,6 +8,7 @@ Author: Cemal Yilmaz - 2026
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+import torch as th
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")  # Use a non-interactive backend for frame rendering
@@ -22,6 +23,7 @@ from scipy.spatial.transform import Rotation
 from Basilisk.utilities import SimulationBaseClass, macros, simIncludeRW, unitTestSupport
 from Basilisk.simulation import spacecraft, reactionWheelStateEffector
 from Basilisk.architecture import messaging
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from agent_training.constants import Constants
 
@@ -146,7 +148,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase):
     torque_1_prev = torque_prev[0]
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
-    margin_koz = state[10]
+    margin_koz = 0
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -160,7 +162,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase):
     err_phi_prev = err_phi_prev * 180.0 / np.pi
 
     r_total = 0
-    USE_REWARD = "prak"
+    USE_REWARD = "prakModTorqueDiff"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -226,6 +228,25 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase):
 
         r_total = r1 + r3 + r4
 
+    if USE_REWARD == "prakModTorqueDiff":
+        # Reward for reducing attitude error
+        r1 = (err_phi_prev - err_phi_current)  # positive if error decreased
+
+        # Penalty for frequently changing torque
+        r2 = -10.0* (np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2))
+
+        # Bonus for high accuracy
+        r3 = 0.0
+        if err_phi_current < 0.25:
+            r3 = 0.01  # bonus for reaching the goal
+        else:
+            r3 = -0.01
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        r_total = r1 + r2 + r3 + r4
+
     # Penalty for entering / being close to keep out zone
     r5 = 0.0
     if phase == 2:
@@ -255,6 +276,11 @@ class BasiliskRWEnv(gym.Env):
 
         self.rw_effector = None
         self.rw_cmd_msg = None
+        self.n_zones = 1
+
+        self.MAX_ZONES = 4
+        self.KOZ_FEATURE_DIM = 1
+        self.SAT_OBS_DIM = 10
 
         self.action_space = spaces.Box(
             low=-1,
@@ -263,12 +289,26 @@ class BasiliskRWEnv(gym.Env):
             dtype=np.float32,
         )
 
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(11,),   # [quat(4), omega_BN_B(3), wheel_speed(3), margin_koz(1)]
-            dtype=np.float32,
-        )
+        self.observation_space = spaces.Dict({
+            "satellite": spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(self.SAT_OBS_DIM,),
+                dtype=np.float32
+            ),
+            "zones": spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(self.MAX_ZONES, self.KOZ_FEATURE_DIM),
+                dtype=np.float32
+            ),
+            "zones_mask": spaces.Box(
+                low=0,
+                high=1,
+                shape=(self.MAX_ZONES,),
+                dtype=np.float32
+            )
+        })
 
         self.sim = None
         self.satellite = None
@@ -383,7 +423,25 @@ class BasiliskRWEnv(gym.Env):
         # Random half-angle between min and max
         half_angle_koz = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
 
+        # Test: set half angle to 0 if (effective) initial error angle is not large enough
+        # if self.initial_error_angle - (half_angle_koz * 180 / np.pi) < 30:
+        #     half_angle_koz = 0
+
         return normal_vector_koz, half_angle_koz
+    
+    def _generate_zones(self, initial_quaternion, min_half_angle_deg, max_half_angle_deg):
+        n_zones = 1
+        # Convert initial boresight quaternion to vector in inertial frame
+        initial_vector_boresight_inertial = rotate_vector_by_quaternion(self.x_axis, initial_quaternion) #r_F inertial frame
+
+        # Calculate normal vector of keep out zone to be the bisector (middle between initial boresight and target boresight, same plane)
+        normal_vector_koz = normalize_vector(initial_vector_boresight_inertial + self.x_axis)
+
+        # Random half-angle between min and max
+        half_angle_koz = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
+
+        return normal_vector_koz, half_angle_koz
+
 
     def _build_spacecraft(self, q_init, omega_init):
         self.satellite = spacecraft.Spacecraft()
@@ -404,7 +462,7 @@ class BasiliskRWEnv(gym.Env):
         self.satellite.hub.sigma_BNInit = [[sigma_init[0]], [sigma_init[1]], [sigma_init[2]]]
         self.satellite.hub.omega_BN_BInit = [[omega_init[0]], [omega_init[1]], [omega_init[2]]]
 
-    def _get_state(self):
+    def _get_sat_state(self):
         state = self.satellite.scStateOutMsg.read()
         state_rw = self.rw_effector.rwSpeedOutMsg.read()
 
@@ -415,9 +473,41 @@ class BasiliskRWEnv(gym.Env):
         quat = MRPToQuat(sigma)
         quat = np.array(quat, dtype=np.float32)
 
-        margin_koz = calc_margin_koz(quat, self.normal_vector_koz, self.half_angle_koz)
+        
 
-        return np.concatenate([quat, omega, omega_rw, np.array([margin_koz])]).astype(np.float32)
+        return np.concatenate([quat, omega, omega_rw]).astype(np.float32)
+    
+    def _get_koz_state(self, quat):
+        
+        margins = np.zeros((self.MAX_ZONES, self.KOZ_FEATURE_DIM), dtype=np.float32)
+
+        if self.n_zones > 0:
+            margin_koz = calc_margin_koz(quat, self.normal_vector_koz, self.half_angle_koz)
+            margins[:self.n_zones] = margin_koz
+
+        # TODO: sort
+
+        return margins
+    
+    def _get_koz_mask_state(self):
+        mask = np.zeros((self.MAX_ZONES,), dtype=np.float32)
+        mask[:self.n_zones] = 1
+
+        return mask
+    
+    def _get_state(self):
+        sat_state = self._get_sat_state()
+        koz_state = self._get_koz_state(sat_state[:4])
+        koz_mask_state = self._get_koz_mask_state()
+
+        state = {
+            "satellite": sat_state.astype(np.float32),
+            "zones": koz_state.astype(np.float32),
+            "zones_mask": koz_mask_state.astype(np.float32)
+        }
+
+        return state
+        
 
     def _apply_action(self, action):
         wheel_motor_torque = (
@@ -527,11 +617,20 @@ class BasiliskRWEnv(gym.Env):
 
         # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
         self.normal_vector_koz, self.half_angle_koz = self._generate_keep_out_zone(q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
+
+        self.n_zones = 1
         
         # Calculate margin angle to keep out zone
         margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
 
-        self.state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial, np.array([margin_koz])))
+        sat_state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
+        koz_state = self._get_koz_state(q_array_initial)
+        koz_mask_state = self._get_koz_mask_state()
+        self.state = {
+            "satellite": sat_state.astype(np.float32),
+            "zones": koz_state.astype(np.float32),
+            "zones_mask": koz_mask_state.astype(np.float32)
+        }
 
         self.torque_prev = np.zeros(3, dtype=np.float32)
 
@@ -555,10 +654,6 @@ class BasiliskRWEnv(gym.Env):
 
         # Normalize observation
         obs = self.state.copy()
-        #obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
-        #obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
-        #obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
-        obs = obs.astype(np.float32)
 
         self._build_basilisk_sim(q_array_initial, omega_initial, wheel_velocities_initial)
         self.sim.InitializeSimulation()
@@ -566,7 +661,7 @@ class BasiliskRWEnv(gym.Env):
         return obs, {}
 
     def step(self, action):
-        q0_prev = self.state[0]
+        q0_prev = self.state["satellite"][0]
 
 
         self._apply_action(action)
@@ -577,11 +672,11 @@ class BasiliskRWEnv(gym.Env):
 
         self.state = self._get_state()
         
-        reward = reward_function(self.state, q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE)
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE)
 
         # Update KOZ metrics
         # Update min margin koz angle
-        margin_koz = self.state[10]
+        margin_koz = 0
        
         if margin_koz < self.min_margin_koz:
             self.min_margin_koz = margin_koz
@@ -592,16 +687,13 @@ class BasiliskRWEnv(gym.Env):
 
         # Normalize observation
         obs = self.state.copy()
-        #obs[4:7] = obs[4:7] / scale_angular_velocity_sat  # Normalize satellite angular velocity
-        #obs[7:10] = obs[7:10] / scale_angular_velocity_wheels  # Normalize RW speeds
-        #obs[10] = obs[10] / scale_margin_koz  # Normalize margin to keep out zone
-        obs = obs.astype(np.float32)
+        
 
         self.episode_torques.append(np.linalg.norm(action * Constants.TORQUE_WHEEL_MAX))
         self.episode_torques_prev.append(np.linalg.norm(self.torque_prev))
 
         # Check settling condition
-        current_error_deg = 2 * math.acos(min(max(abs(self.state[0]), 0.0), 1.0)) * 180 / np.pi
+        current_error_deg = 2 * math.acos(min(max(abs(self.state["satellite"][0]), 0.0), 1.0)) * 180 / np.pi
         is_within_accuracy = True if current_error_deg <= self.settling_threshold_deg else False
 
         # From unsettled to settled
@@ -690,3 +782,78 @@ class BasiliskRWEnv(gym.Env):
 
     def close(self):
         pass
+
+
+class LSTM(BaseFeaturesExtractor):
+    def __init__(self, observation_space: spaces.Dict, sat_obs_dim: int, lstm_out_dim: int):
+        self.sat_obs_dim = sat_obs_dim
+        self.lstm_out_dim = lstm_out_dim
+        self.total_obs_dim = sat_obs_dim + lstm_out_dim
+
+        # Number of features for the extractor corresponds to the combined observation, as the extractor also combines it.
+        super().__init__(observation_space=observation_space, features_dim=self.total_obs_dim)
+
+        # Get the maximum number of KOZs and the LSTM input dimension (= feature dimension of a KOZ)
+        zones_max, lstm_in_dim = observation_space["zones"].shape
+        self.zones_max = zones_max
+        self.lstm_in_dim = lstm_in_dim
+
+        # TODO: should i also convert the sat obs into a latent obs?
+        # e.g. sat_obs_dim (10) --> nn transformation (linear?) --> sat_obs_latent_dim (32?)
+
+        # The LSTM 
+        self.lstm = th.nn.LSTM(
+            input_size=lstm_in_dim,
+            hidden_size=lstm_out_dim,
+            num_layers=1, # TODO: clarify
+            batch_first=True # Because TODO
+            #device=TODO
+        )
+
+    def forward(self, observations):
+        sat_obs: th.Tensor = observations["satellite"]
+        zones_obs: th.Tensor = observations["zones"]
+        zones_mask: th.Tensor = observations["zones_mask"] # Defines which vectors in the zones obs are actual zones at this forward pass
+        batch_size = sat_obs.shape[0]
+        device = sat_obs.device
+
+        # How many KOZs each batch observation contains
+        zones_count = zones_mask.sum(dim=1).long()
+
+        # A bit mask for the batch: True --> has at least one KOZ; False has no KOZ.
+        non_zero_zones_mask = zones_count > 0
+
+        # From the mask, get the indices of the batch for the observations with at least one KOZ
+        non_zero_indices = non_zero_zones_mask.nonzero(as_tuple=True)[0]
+
+        # Container for LSTM output of the entire batch
+        lstm_out = th.zeros(batch_size, self.lstm_out_dim, device=device)
+
+        # Number of batch obsverations with at least one KOZ
+        non_zero_obs_count = non_zero_indices.numel()
+
+        # If there is at least one batch with KOZs, process the LSTM
+        if non_zero_obs_count > 0:
+
+            # Get all observations (and their KOZ count) with at least one KOZ from the batch
+            non_zero_zones = zones_obs[non_zero_indices]
+            non_zero_zones_count = zones_count[non_zero_indices]
+
+            # Create an LSTM sequence (consisting of as many LSTM cells as there are KOZs) for each batch obs (which has at least 1 KOZ)
+            lstm_sequences = th.nn.utils.rnn.pack_padded_sequence(
+                input=non_zero_zones,
+                lengths=non_zero_zones_count.cpu(), # As we provide it as a tensor (and not a list), must be on the CPU
+                batch_first=True,
+                enforce_sorted=False
+            )
+
+            # Process the LSTM
+            output, (hidden_state_out, cell_state_out) = self.lstm(input=lstm_sequences)
+
+            # Store the final hidden state of each batch observation
+            lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
+
+        # Combine satellite obs and LSTM output
+        combined = th.cat([sat_obs, lstm_out], dim=1)
+
+        return combined
