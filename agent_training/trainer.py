@@ -22,7 +22,12 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import HParam
 
 from agent_training import environment as sat_env
+from agent_training.environment import LSTM
 from config.config import Config
+
+# Backward compatibility for checkpoints saved when this script imported LSTM
+# via `from environment import LSTM`.
+sys.modules.setdefault("environment", sat_env)
 
 
 # Terminal colors
@@ -62,11 +67,92 @@ class CustomCallback(BaseCallback):
             "max_torque": [],
             "settled": [],
             "min_margin_koz": [],
-            "entered_koz_count": [],
+            "entered_koz_count": []
         }
 
+    def _log_network_lstm(self, lstm: LSTM, network_name: str):
+        """
+        Logs each weight and bias of the given LSTM.
+        Important: the sizes used are only valid for an LSTM which is not bidirectional and where proj_size = 0.
+        For more details, see PyTorch's LSTM class.
+
+        Args:
+            lstm: The LSTM features extractor.
+            network_name: The name of the network the LSTM belongs to.
+        """
+
+        input_size = lstm.input_size
+        hidden_size = lstm.hidden_size
+
+        # Go through all parameters
+        for param_name, param in lstm.named_parameters():
+            # Get the parameter tensor
+            param_value = param.detach().cpu()
+
+            # Base metric name
+            metric_name = f"custom_lstm/{network_name}/{param_name}"
+
+            # Separate weights and biases per gate and convert from tensor --> list.
+            input_values = param_value[0:hidden_size].tolist()
+            forget_values = param_value[hidden_size:2*hidden_size].tolist()
+            cell_values = param_value[2*hidden_size:3*hidden_size].tolist()
+            output_values = param_value[3*hidden_size:4*hidden_size].tolist()
+
+            # The input-hidden weights per gate are of shape (hidden_size, layer_input_size) 
+            if param_name.startswith("lstm.weight_ih"):
+                for h in range(hidden_size):
+
+                    # The first layer (index 0) has layer_input_size = input_size
+                    if param_name.startswith("lstm.weight_ih_l0"):
+                        layer_input_size = input_size
+                    # Higher layers have layer_input_size = hidden_size
+                    else:
+                        layer_input_size = hidden_size
+
+                    for i in range(layer_input_size):
+                        self.logger.record(f"{metric_name}_input_h{h}i{i}", input_values[h][i])
+                        self.logger.record(f"{metric_name}_forget_h{h}i{i}", forget_values[h][i])
+                        self.logger.record(f"{metric_name}_cell_h{h}i{i}", cell_values[h][i])
+                        self.logger.record(f"{metric_name}_output_h{h}i{i}", output_values[h][i])
+
+            # The hidden-hidden weights per gate are of shape (hidden_size, hidden_size)
+            elif param_name.startswith("lstm.weight_hh"):
+                for h1 in range(hidden_size):
+                    for h2 in range(hidden_size):
+                        self.logger.record(f"{metric_name}_input_h{h1}h{h2}", input_values[h1][h2])
+                        self.logger.record(f"{metric_name}_forget_h{h1}h{h2}", forget_values[h1][h2])
+                        self.logger.record(f"{metric_name}_cell_h{h1}h{h2}", cell_values[h1][h2])
+                        self.logger.record(f"{metric_name}_output_h{h1}h{h2}", output_values[h1][h2])
+
+            # Both input-hidden and hidden-hidden biases per gate are of shape (hidden_size)
+            elif param_name.startswith("lstm.bias_ih") or param_name.startswith("lstm.bias_hh"):
+
+                for h in range(hidden_size):
+                    self.logger.record(f"{metric_name}_input_h{h}", input_values[h])
+                    self.logger.record(f"{metric_name}_forget_h{h}", forget_values[h])
+                    self.logger.record(f"{metric_name}_cell_h{h}", cell_values[h])
+                    self.logger.record(f"{metric_name}_output_h{h}", output_values[h])
+
+    def _log_lstm_parameters(self):
+        """
+        Log LSTM weights and biases in Tensorboard.
+        """
+
+        policy = getattr(self.model, "policy")
+        
+        actor = getattr(policy, "actor")
+        critic = getattr(policy, "critic")
+
+        features_extractor_actor = getattr(actor, "features_extractor")
+        features_extractor_critic = getattr(critic, "features_extractor")
+
+        self._log_network_lstm(features_extractor_actor, "actor")
+        self._log_network_lstm(features_extractor_critic, "critic")
+
+           
+
     def _on_training_start(self):
-        # Define the metrics that will appear in the `HPARAMS` Tensorboard tab by referencing their tag
+        # Define the metrics that will appear in the HPARAMS Tensorboard tab by referencing their key
         hparam_dict = {
                 "algorithm": self.model.__class__.__name__,
                 "learning rate": self.model.learning_rate,
@@ -74,7 +160,7 @@ class CustomCallback(BaseCallback):
                 "gamma": self.model.gamma
         }
         
-        # Tensorbaord will find & display metrics from the SCALARS tab
+        # Tensorbaord will find and display metrics from the SCALARS tab
         metric_dict = {
             "rollout/ep_len_mean": 0,
             "train/value_loss": 0.0
@@ -85,17 +171,26 @@ class CustomCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
+        is_end_of_episode = False
             
         # Collect custom metrics from episode endings
         for info in infos:
             if isinstance(info, dict):
                 # Check if this info contains custom metrics (episode ended)
                 has_custom_metrics = any(key.startswith("custom_metrics/") for key in info.keys())
+
                 if has_custom_metrics:
+                    is_end_of_episode = True
+
                     for metric_name in self.custom_metrics.keys():
                         metric_key = f"custom_metrics/{metric_name}"
+
                         if metric_key in info:
                             self.custom_metrics[metric_name].append(info[metric_key])
+                  
+        if is_end_of_episode:
+            self._log_custom_metrics()
+            self._log_lstm_parameters()
 
         # Save model every save_interval total timesteps
         if self.num_timesteps % self.save_interval == 0:
@@ -137,10 +232,7 @@ class CustomCallback(BaseCallback):
                 # Clear the accumulated values
                 self.custom_metrics[metric_name] = []
 
-
-    def _on_rollout_end(self):
-        # Log custom metrics at the end of each rollout
-        self._log_custom_metrics()
+        
 
 
 def start_tensorboard():
@@ -336,9 +428,18 @@ def create_or_load_model(env, continue_training, model_name, log_path):
         print(f"|-----{YELLOW_START}Creating new model from scratch...{COLOR_END}")
 
         # Add normalization wrapper
-        env = VecNormalize(env, norm_reward=False)
+        env = VecNormalize(env, norm_reward=False, norm_obs_keys=["satellite", "zones"]) # Do not normalize the zones mask
 
-        model = SAC("MlpPolicy", env, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
+        # Create LSTM extractor
+        policy_kwargs = dict(
+            features_extractor_class=LSTM,
+            features_extractor_kwargs=dict(
+                sat_obs_dim=10,
+                lstm_out_dim=1
+            )
+        )
+
+        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
                     tensorboard_log=log_path, seed=None, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
