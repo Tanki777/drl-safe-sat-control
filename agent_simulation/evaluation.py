@@ -18,9 +18,14 @@ if _drl_repo_dir not in sys.path:
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+from agent_training import environment as sat_env
 from agent_training.constants import Constants
 from agent_training.environment import BasiliskRWEnv, scale_torque
 from config.config import Config
+
+# Backward compatibility for models saved when trainer.py imported LSTM via
+# `from environment import LSTM`. Cloudpickle stores that module path.
+sys.modules.setdefault("environment", sat_env)
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
@@ -113,7 +118,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
 
         action, _states = model.predict(obs, deterministic=True)
-        states.append(eval_env.get_original_obs()[0])
+        states.append(eval_env.get_original_obs()["satellite"][0])
 
         # Step the environment
         obs, reward, done, info = eval_env.step(action)
@@ -160,7 +165,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         "times": times,
         "normal_vector_koz": normal_vector_koz,
         "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": states_array[:, 10]*180/np.pi,
+        "margin_angles_koz": cumulative_rewards, # PSEUDO
         "min_margin_koz": min_margin_koz,
         "cnt_Koz_violations": cnt_Koz_violations
         }
@@ -304,19 +309,20 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_step
     save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_ep[{episodes}]_{time_iso}.npz")
     np.savez(save_path, data=np.array(simulation_data), dtype=object)
 
+    calc_metrics(simulation_data)
     # Print results
-    print()
-    print(f"Violation rate: {koz_violation_episodes/episodes*100}%")
-    print(f"Agent was within KOZ for these amount of steps per episode:")
-    print(f"--- Mean: {np.mean(cnts_koz_violations_array):.2f}, Std: {np.std(cnts_koz_violations_array):.2f}, Min: {np.min(cnts_koz_violations_array)}, Max: {np.max(cnts_koz_violations_array)}")
-    print(f"Minimum margin to KOZ (degrees):")
-    print(f"--- Mean: {np.mean(min_margins_koz_array):.2f}, Std: {np.std(min_margins_koz_array):.2f}, Min: {np.min(min_margins_koz_array):.2f}, Max: {np.max(min_margins_koz_array):.2f}")
-    print(f"Final rotation angle (degrees):")
-    print(f"--- Mean: {np.mean(err_angles_final_array):.2f}, Std: {np.std(err_angles_final_array):.2f}, Min: {np.min(err_angles_final_array):.2f}, Max: {np.max(err_angles_final_array):.2f}")
-    print(f"Final angular velocity (deg/s):")
-    print(f"--- Mean: {np.mean(ang_vels_final_array):.4f}, Std: {np.std(ang_vels_final_array):.4f}, Min: {np.min(ang_vels_final_array):.4f}, Max: {np.max(ang_vels_final_array):.4f}")
-    print(f"Rewards:")
-    print(f"--- Mean: {np.mean(ep_rewards):.2f}, Std: {np.std(ep_rewards):.2f}, Min: {np.min(ep_rewards):.2f}, Max: {np.max(ep_rewards):.2f}")
+    # print()
+    # print(f"Violation rate: {koz_violation_episodes/episodes*100}%")
+    # print(f"Agent was within KOZ for these amount of steps per episode:")
+    # print(f"--- Mean: {np.mean(cnts_koz_violations_array):.2f}, Std: {np.std(cnts_koz_violations_array):.2f}, Min: {np.min(cnts_koz_violations_array)}, Max: {np.max(cnts_koz_violations_array)}")
+    # print(f"Minimum margin to KOZ (degrees):")
+    # print(f"--- Mean: {np.mean(min_margins_koz_array):.2f}, Std: {np.std(min_margins_koz_array):.2f}, Min: {np.min(min_margins_koz_array):.2f}, Max: {np.max(min_margins_koz_array):.2f}")
+    # print(f"Final rotation angle (degrees):")
+    # print(f"--- Mean: {np.mean(err_angles_final_array):.2f}, Std: {np.std(err_angles_final_array):.2f}, Min: {np.min(err_angles_final_array):.2f}, Max: {np.max(err_angles_final_array):.2f}")
+    # print(f"Final angular velocity (deg/s):")
+    # print(f"--- Mean: {np.mean(ang_vels_final_array):.4f}, Std: {np.std(ang_vels_final_array):.4f}, Min: {np.min(ang_vels_final_array):.4f}, Max: {np.max(ang_vels_final_array):.4f}")
+    # print(f"Rewards:")
+    # print(f"--- Mean: {np.mean(ep_rewards):.2f}, Std: {np.std(ep_rewards):.2f}, Min: {np.min(ep_rewards):.2f}, Max: {np.max(ep_rewards):.2f}")
 
 
 def calc_metrics(data: list):
@@ -510,7 +516,7 @@ if __name__ == "__main__":
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
-    #loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_seed1000_sched_180_3000000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[10000]_2026-05-27-20-52-10.npz")
+    #loaded = load_evaluation_data("test_lstm_ph1_1_2900000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[1000]_2026-06-28-10-28-42.npz")
     #calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
