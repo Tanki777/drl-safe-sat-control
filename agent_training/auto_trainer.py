@@ -119,7 +119,7 @@ def create_model_metadata(model_name, schedule, model):
         "use sde": model.use_sde,
         "sde sample freq": model.sde_sample_freq,
         "use sde at warmup": model.use_sde_at_warmup,
-        "policy kwargs": model.policy_kwargs,
+        "policy kwargs": model.policy_kwargs.__class__.__name__ if model.policy_kwargs is not None else None,
         "seed": model.seed,
         "device": model.device.type if model.device is not None else None
     }
