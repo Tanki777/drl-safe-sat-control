@@ -81,16 +81,13 @@ class CustomCallback(BaseCallback):
             network_name: The name of the network the LSTM belongs to.
         """
 
-        input_size = lstm.input_size
-        hidden_size = lstm.hidden_size
+        input_size = lstm.lstm.input_size
+        hidden_size = lstm.lstm.hidden_size
 
         # Go through all parameters
         for param_name, param in lstm.named_parameters():
             # Get the parameter tensor
             param_value = param.detach().cpu()
-
-            # Base metric name
-            metric_name = f"custom_lstm/{network_name}/{param_name}"
 
             # Separate weights and biases per gate and convert from tensor --> list.
             input_values = param_value[0:hidden_size].tolist()
@@ -100,6 +97,7 @@ class CustomCallback(BaseCallback):
 
             # The input-hidden weights per gate are of shape (hidden_size, layer_input_size) 
             if param_name.startswith("lstm.weight_ih"):
+                base_name = f"lstm_{network_name}_weight/w_ih"
                 for h in range(hidden_size):
 
                     # The first layer (index 0) has layer_input_size = input_size
@@ -110,28 +108,29 @@ class CustomCallback(BaseCallback):
                         layer_input_size = hidden_size
 
                     for i in range(layer_input_size):
-                        self.logger.record(f"{metric_name}_input_h{h}i{i}", input_values[h][i])
-                        self.logger.record(f"{metric_name}_forget_h{h}i{i}", forget_values[h][i])
-                        self.logger.record(f"{metric_name}_cell_h{h}i{i}", cell_values[h][i])
-                        self.logger.record(f"{metric_name}_output_h{h}i{i}", output_values[h][i])
+                        self.logger.record(f"{base_name}_input_h{h}i{i}", input_values[h][i])
+                        self.logger.record(f"{base_name}_forget_h{h}i{i}", forget_values[h][i])
+                        self.logger.record(f"{base_name}_cell_h{h}i{i}", cell_values[h][i])
+                        self.logger.record(f"{base_name}_output_h{h}i{i}", output_values[h][i])
 
             # The hidden-hidden weights per gate are of shape (hidden_size, hidden_size)
             elif param_name.startswith("lstm.weight_hh"):
+                base_name = f"lstm_{network_name}_weight/w_hh"
                 for h1 in range(hidden_size):
                     for h2 in range(hidden_size):
-                        self.logger.record(f"{metric_name}_input_h{h1}h{h2}", input_values[h1][h2])
-                        self.logger.record(f"{metric_name}_forget_h{h1}h{h2}", forget_values[h1][h2])
-                        self.logger.record(f"{metric_name}_cell_h{h1}h{h2}", cell_values[h1][h2])
-                        self.logger.record(f"{metric_name}_output_h{h1}h{h2}", output_values[h1][h2])
+                        self.logger.record(f"{base_name}_input_h{h1}h{h2}", input_values[h1][h2])
+                        self.logger.record(f"{base_name}_forget_h{h1}h{h2}", forget_values[h1][h2])
+                        self.logger.record(f"{base_name}_cell_h{h1}h{h2}", cell_values[h1][h2])
+                        self.logger.record(f"{base_name}_output_h{h1}h{h2}", output_values[h1][h2])
 
             # Both input-hidden and hidden-hidden biases per gate are of shape (hidden_size)
             elif param_name.startswith("lstm.bias_ih") or param_name.startswith("lstm.bias_hh"):
-
+                base_name = f"lstm_{network_name}_bias/b_ih" if param_name.startswith("lstm.bias_ih") else f"lstm_{network_name}_bias/b_hh"
                 for h in range(hidden_size):
-                    self.logger.record(f"{metric_name}_input_h{h}", input_values[h])
-                    self.logger.record(f"{metric_name}_forget_h{h}", forget_values[h])
-                    self.logger.record(f"{metric_name}_cell_h{h}", cell_values[h])
-                    self.logger.record(f"{metric_name}_output_h{h}", output_values[h])
+                    self.logger.record(f"{base_name}_input_h{h}", input_values[h])
+                    self.logger.record(f"{base_name}_forget_h{h}", forget_values[h])
+                    self.logger.record(f"{base_name}_cell_h{h}", cell_values[h])
+                    self.logger.record(f"{base_name}_output_h{h}", output_values[h])
 
     def _log_lstm_parameters(self):
         """
@@ -407,6 +406,9 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             
             # Update tensorboard log directory to continue logging
             model.tensorboard_log = log_path
+
+            # DEBUG overwrite gradient step
+            model.gradient_steps = -1
             
         except Exception as e:
             print(f"|-----{RED_START}Failed to load model: {e}{COLOR_END}")
@@ -414,14 +416,13 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             continue_training = False
 
         # Try to load existing replay buffer
-        if os.path.exists(latest_replay_buffer_path):
-            try:
-                model.load_replay_buffer(latest_replay_buffer_path)
-                print(f"|-----{GREEN_START}Successfully loaded existing replay buffer.{COLOR_END}")
-                print(f"DEBUG: Loaded replay buffer with {model.replay_buffer.size()} transitions.")
-            except Exception as e:
-                print(f"|-----{RED_START}Failed to load replay buffer: {e}{COLOR_END}")
-                print(f"|-----{YELLOW_START}Continuing without loading replay buffer...{COLOR_END}")
+        try:
+            model.load_replay_buffer(latest_replay_buffer_path)
+            print(f"|-----{GREEN_START}Successfully loaded existing replay buffer.{COLOR_END}")
+            print(f"|-------Loaded replay buffer with {model.replay_buffer.size()} transitions.")
+        except Exception as e:
+            print(f"|-----{RED_START}Failed to load replay buffer: {e}{COLOR_END}")
+            print(f"|-----{YELLOW_START}Continuing without loading replay buffer...{COLOR_END}")
     
     # Create new model if not loading existing one
     if not continue_training or not os.path.exists(latest_model_path):
@@ -435,11 +436,11 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             features_extractor_class=LSTM,
             features_extractor_kwargs=dict(
                 sat_obs_dim=10,
-                lstm_out_dim=1
+                lstm_out_dim=4
             )
         )
 
-        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
+        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=1,verbose=1, device=Config.General.DEVICE,
                     tensorboard_log=log_path, seed=None, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
