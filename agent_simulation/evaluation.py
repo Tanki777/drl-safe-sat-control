@@ -20,7 +20,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from agent_training import environment as sat_env
 from agent_training.constants import Constants
-from agent_training.environment import BasiliskRWEnv, scale_torque
+from agent_training.environment import BasiliskRWEnv, scale_torque, rotate_vector_by_quaternion_to_body_frame, LSTM
 from config.config import Config
 
 # Backward compatibility for models saved when trainer.py imported LSTM via
@@ -100,6 +100,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     # Arrays for storing data
     times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
     states = []
+    states_koz = []
+    lstm_output = []
     torques = []
     rewards = []
     frames = []
@@ -110,6 +112,12 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
     min_margin_koz = 0
     cnt_Koz_violations = 0
+    zones_mask = eval_env.get_original_obs()["zones_mask"][0]
+
+    # Get LSTM
+    policy = getattr(model, "policy") 
+    actor = getattr(policy, "actor")
+    features_extractor_actor: LSTM = getattr(actor, "features_extractor")
 
     # Simulation loop
     while not done:
@@ -119,11 +127,11 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
         action, _states = model.predict(obs, deterministic=True)
         states.append(eval_env.get_original_obs()["satellite"][0])
+        states_koz.append(eval_env.get_original_obs()["zones"][0])
+        lstm_output.append(features_extractor_actor.lstm_out.tolist())
 
         # Step the environment
         obs, reward, done, info = eval_env.step(action)
-
-        #print(done)
 
         torques.append(action[0].copy())
         rewards.append(reward[0])
@@ -145,6 +153,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     # Extract the solution for attitude (in terms of quaternion) and angular velocity
     states_array = np.array(states)
+    states_koz_array = np.array(states_koz)
+    lstm_output_array = np.array(lstm_output)
     torques_array = np.array(torques) * scale_torque
     rewards_array = np.array(rewards)
 
@@ -165,9 +175,12 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         "times": times,
         "normal_vector_koz": normal_vector_koz,
         "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": cumulative_rewards, # PSEUDO
+        "margin_angles_koz": states_koz_array[:, :, 0] * 180 / np.pi, # TODO: support multiple KOZs
+        "direction_koz": states_koz_array[:, :, 1:4],
         "min_margin_koz": min_margin_koz,
-        "cnt_Koz_violations": cnt_Koz_violations
+        "cnt_Koz_violations": cnt_Koz_violations,
+        "lstm_output": lstm_output_array,
+        "zones_mask": zones_mask
         }
     
     return simulation_data
@@ -511,7 +524,9 @@ if __name__ == "__main__":
         Config.Evaluation.MAX_INITIAL_ANGULAR_VELOCITY,
         Config.Evaluation.MAX_STEPS,
         Config.Evaluation.MIN_HALF_ANGLE_KOZ,
-        Config.Evaluation.MAX_HALF_ANGLE_KOZ
+        Config.Evaluation.MAX_HALF_ANGLE_KOZ,
+        Config.Evaluation.MIN_NR_KOZ,
+        Config.Evaluation.MAX_NR_KOZ,
     ]
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
@@ -522,7 +537,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
     t_end = time.time()
 
     print()
