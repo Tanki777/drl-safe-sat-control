@@ -17,6 +17,7 @@ import math
 import sys
 import os
 import warnings
+import copy
 
 from numba import njit
 from scipy.spatial.transform import Rotation
@@ -83,7 +84,7 @@ def rotate_vector_by_quaternion(v, q):
     Returns:
         v_rotated: The rotated vector as a numpy array [x, y, z].
     """
-    v = v.astype(np.float32)
+    v = v.astype(np.float64)
     w, x, y, z = q
 
     # Convert quaternion to rotation matrix
@@ -91,9 +92,31 @@ def rotate_vector_by_quaternion(v, q):
         [1 - 2*(y*y + z*z),     2*(x*y - z*w),       2*(x*z + y*w)],
         [2*(x*y + z*w),         1 - 2*(x*x + z*z),   2*(y*z - x*w)],
         [2*(x*z - y*w),         2*(y*z + x*w),       1 - 2*(x*x + y*y)]
-    ], dtype=np.float32)
+    ], dtype=np.float64)
 
     return R @ v
+
+@njit
+def rotate_vector_by_quaternion_to_body_frame(v, q):
+    """
+    Rotate a vector v by a quaternion q from world frame to body frame.
+    Args:
+        v: Input vector as a numpy array [x, y, z] in world frame.
+        q: Quaternion representing the rotation as a numpy array [w, x, y, z].
+    Returns:
+        v_rotated: The rotated vector as a numpy array [x, y, z] in body frame.
+    """
+    v = v.astype(np.float64)
+    w, x, y, z = q
+
+    # Convert quaternion to rotation matrix
+    R = np.array([
+        [1 - 2*(y*y + z*z),     2*(x*y - z*w),       2*(x*z + y*w)],
+        [2*(x*y + z*w),         1 - 2*(x*x + z*z),   2*(y*z - x*w)],
+        [2*(x*z - y*w),         2*(y*z + x*w),       1 - 2*(x*x + y*y)]
+    ], dtype=np.float64)
+
+    return R.T @ v
 
 @njit
 def calc_margin_koz(q, normal_vector_koz, half_angle_koz):
@@ -106,7 +129,7 @@ def calc_margin_koz(q, normal_vector_koz, half_angle_koz):
     Returns:
         margin_angle: The margin angle to the keep out zone in radians.
     """
-    x_axis = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    x_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
     body_axis_arr = rotate_vector_by_quaternion(x_axis, q)
 
     norm_body = np.sqrt(body_axis_arr[0]**2 + body_axis_arr[1]**2 + body_axis_arr[2]**2)
@@ -136,7 +159,94 @@ def MRPToQuat(sigma):
     quat = R.as_quat(scalar_first=True)
     return quat
 
-def reward_function(state, _q0_prev, torque, torque_prev, phase):
+def build_spacecraft(q_init, omega_init):
+    satellite = spacecraft.Spacecraft()
+    satellite.ModelTag = "satellite"
+
+    # Hub inertia [kg m^2]
+    inertia = [0.02 / 3,  0.,         0.,
+                0.,        0.1256 / 3, 0.,
+                0.,        0.,         0.1256 / 3]
+    satellite.hub.IHubPntBc_B = unitTestSupport.np2EigenMatrix3d(inertia)
+
+    satellite.hub.mHub = 4.0 # TODO clarify if needed
+    satellite.hub.r_BcB_B = [[0.0], [0.0], [0.0]] # position vector of body-fixed point B relative to center of mass
+
+    sigma_init = quatToMRP(q_init)
+
+    # Basilisk attitude state uses MRPs, not quaternions
+    satellite.hub.sigma_BNInit = [[sigma_init[0]], [sigma_init[1]], [sigma_init[2]]]
+    satellite.hub.omega_BN_BInit = [[omega_init[0]], [omega_init[1]], [omega_init[2]]]
+
+    return satellite
+
+
+def build_basilisk_sim(omega_wheel_init, satellite, dt) -> tuple[SimulationBaseClass.SimBaseClass, messaging.ArrayMotorTorqueMsg, reactionWheelStateEffector.ReactionWheelStateEffector]:
+    sim = SimulationBaseClass.SimBaseClass()
+
+    process = sim.CreateNewProcess("dynProcess")
+    task_name = "dynTask"
+    process.addTask(
+        sim.CreateNewTask(task_name, macros.sec2nano(dt))
+    )
+
+    rw_effector = reactionWheelStateEffector.ReactionWheelStateEffector()
+    rw_effector.ModelTag = "reactionWheels"
+
+    rw_factory = simIncludeRW.rwFactory()
+    varRWModel = messaging.BalancedWheels
+
+    # Three orthogonal wheels, as configured in Bevo-2. Reaction wheel model: 3x Rocketlab 10 mNms-1
+    RW1 = rw_factory.create(
+        "custom",
+        [1.0, 0.0, 0.0],
+        Omega=float(omega_wheel_init[0]),
+        u_max=Constants.TORQUE_WHEEL_MAX,
+        Omega_max=Constants.SPEED_WHEEL_MAX,
+        maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
+        RWModel=varRWModel
+    )
+    RW2 = rw_factory.create(
+        "custom",
+        [0.0, 1.0, 0.0],
+        Omega=float(omega_wheel_init[1]),
+        u_max=Constants.TORQUE_WHEEL_MAX,
+        Omega_max=Constants.SPEED_WHEEL_MAX,
+        maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
+        RWModel=varRWModel
+    )
+    RW3 = rw_factory.create(
+        "custom",
+        [0.0, 0.0, 1.0],
+        Omega=float(omega_wheel_init[2]),
+        u_max=Constants.TORQUE_WHEEL_MAX,
+        Omega_max=Constants.SPEED_WHEEL_MAX,
+        maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
+        RWModel=varRWModel
+    )
+
+    rw_factory.addToSpacecraft(
+        satellite.ModelTag,
+        rw_effector,
+        satellite,
+    )
+
+    # Stand-alone RW motor torque command message
+    cmd_payload = messaging.ArrayMotorTorqueMsgPayload()
+    cmd_payload.motorTorque = [0.0, 0.0, 0.0]
+
+    rw_cmd_msg = messaging.ArrayMotorTorqueMsg().write(cmd_payload)
+    rw_effector.rwMotorCmdInMsg.subscribeTo(rw_cmd_msg)
+
+    # Add modules to task.
+    # RW effector before spacecraft dynamics.
+    sim.AddModelToTask(task_name, rw_effector, 2)
+    sim.AddModelToTask(task_name, satellite, 1)
+
+    return sim, rw_cmd_msg, rw_effector
+
+
+def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz):
     q0_current = state[0]
     ang_vel_sat_x = state[4]
     ang_vel_sat_y = state[5]
@@ -148,7 +258,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase):
     torque_1_prev = torque_prev[0]
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
-    margin_koz = 0
+    margin_koz = state_koz[0][0] # TODO: support multiple KOZs
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -276,17 +386,16 @@ class BasiliskRWEnv(gym.Env):
 
         self.rw_effector = None
         self.rw_cmd_msg = None
-        self.n_zones = 1
 
         self.MAX_ZONES = 4
-        self.KOZ_FEATURE_DIM = 1
+        self.KOZ_FEATURE_DIM = 4
         self.SAT_OBS_DIM = 10
 
         self.action_space = spaces.Box(
             low=-1,
             high=1,
             shape=(3,),
-            dtype=np.float32,
+            dtype=np.float64,
         )
 
         self.observation_space = spaces.Dict({
@@ -294,19 +403,19 @@ class BasiliskRWEnv(gym.Env):
                 low=-np.inf,
                 high=np.inf,
                 shape=(self.SAT_OBS_DIM,),
-                dtype=np.float32
+                dtype=np.float64
             ),
             "zones": spaces.Box(
                 low=-np.inf,
                 high=np.inf,
                 shape=(self.MAX_ZONES, self.KOZ_FEATURE_DIM),
-                dtype=np.float32
+                dtype=np.float64
             ),
             "zones_mask": spaces.Box(
                 low=0,
                 high=1,
                 shape=(self.MAX_ZONES,),
-                dtype=np.float32
+                dtype=np.float64
             )
         })
 
@@ -323,6 +432,8 @@ class BasiliskRWEnv(gym.Env):
             self.max_steps = 3000
             self.min_half_angle_koz = 0.0  # degrees
             self.max_half_angle_koz = 0.0  # degrees
+            self.min_nr_koz = 0
+            self.max_nr_koz = 0
         else:
             self.min_initial_angle = initial_state[0]
             self.max_initial_angle = initial_state[1]
@@ -331,11 +442,15 @@ class BasiliskRWEnv(gym.Env):
             self.max_steps = initial_state[4]
             self.min_half_angle_koz = initial_state[5]
             self.max_half_angle_koz = initial_state[6]
+            self.min_nr_koz = initial_state[7]
+            self.max_nr_koz = initial_state[8]
 
         if self.max_half_angle_koz > 0.0:
             self.PHASE = 2
         else:
             self.PHASE = 1
+
+        self.current_nr_koz = np.random.randint(self.min_nr_koz, self.max_nr_koz+1) # Excludes upper bound
 
         # Custom metrics tracking for TensorBoard
         self.initial_error_angle = 0.0
@@ -349,7 +464,7 @@ class BasiliskRWEnv(gym.Env):
         self.min_margin_koz = 0.0
         self.entered_koz_count = 0
 
-        self.x_axis = np.array([1, 0, 0]) # For frame rendering
+        self.x_axis = np.array([1, 0, 0], dtype=np.float64) # Boresight vector (body frame)
 
         # Set initial state (will be randomized in reset())
         self.reset()
@@ -368,10 +483,10 @@ class BasiliskRWEnv(gym.Env):
             quaternion: A quaternion [w, x, y, z] that rotates reference_vector by the desired angle
         """
         if max_angle_deg == 0:
-            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
         
         # Normalize the reference vector
-        ref_vec = np.array(reference_vector, dtype=np.float32)
+        ref_vec = np.array(reference_vector, dtype=np.float64)
         ref_vec = ref_vec / np.linalg.norm(ref_vec)
         
         # If min and max are equal, use that angle directly
@@ -398,8 +513,13 @@ class BasiliskRWEnv(gym.Env):
         # Convert axis-angle to quaternion
         q0 = np.cos(angle_rad / 2)
         q_vec = np.sin(angle_rad / 2) * axis
+
+        # Ensure positive scalar part of quaternion
+        if q0 < 0:
+            q0 = -q0
+            q_vec = -q_vec
         
-        quaternion = np.array([q0, q_vec[0], q_vec[1], q_vec[2]], dtype=np.float32)
+        quaternion = np.array([q0, q_vec[0], q_vec[1], q_vec[2]], dtype=np.float64)
         return normalize_quaternion(quaternion)
     
     def _generate_keep_out_zone(self, initial_quaternion, min_half_angle_deg, max_half_angle_deg):
@@ -428,70 +548,44 @@ class BasiliskRWEnv(gym.Env):
         #     half_angle_koz = 0
 
         return normal_vector_koz, half_angle_koz
+
     
-    def _generate_zones(self, initial_quaternion, min_half_angle_deg, max_half_angle_deg):
-        n_zones = 1
-        # Convert initial boresight quaternion to vector in inertial frame
-        initial_vector_boresight_inertial = rotate_vector_by_quaternion(self.x_axis, initial_quaternion) #r_F inertial frame
-
-        # Calculate normal vector of keep out zone to be the bisector (middle between initial boresight and target boresight, same plane)
-        normal_vector_koz = normalize_vector(initial_vector_boresight_inertial + self.x_axis)
-
-        # Random half-angle between min and max
-        half_angle_koz = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
-
-        return normal_vector_koz, half_angle_koz
-
-
-    def _build_spacecraft(self, q_init, omega_init):
-        self.satellite = spacecraft.Spacecraft()
-        self.satellite.ModelTag = "satellite"
-
-        # Hub inertia [kg m^2]
-        inertia = [0.02 / 3,  0.,         0.,
-                    0.,        0.1256 / 3, 0.,
-                    0.,        0.,         0.1256 / 3]
-        self.satellite.hub.IHubPntBc_B = unitTestSupport.np2EigenMatrix3d(inertia)
-
-        self.satellite.hub.mHub = 4.0 # TODO clarify if needed
-        self.satellite.hub.r_BcB_B = [[0.0], [0.0], [0.0]] # position vector of body-fixed point B relative to center of mass
-
-        sigma_init = quatToMRP(q_init)
-
-        # Basilisk attitude state uses MRPs, not quaternions
-        self.satellite.hub.sigma_BNInit = [[sigma_init[0]], [sigma_init[1]], [sigma_init[2]]]
-        self.satellite.hub.omega_BN_BInit = [[omega_init[0]], [omega_init[1]], [omega_init[2]]]
 
     def _get_sat_state(self):
         state = self.satellite.scStateOutMsg.read()
         state_rw = self.rw_effector.rwSpeedOutMsg.read()
 
-        sigma = np.array(state.sigma_BN, dtype=np.float32)
-        omega = np.array(state.omega_BN_B, dtype=np.float32)
-        omega_rw = np.array(state_rw.wheelSpeeds[0:3], dtype=np.float32)
+        sigma = np.array(state.sigma_BN, dtype=np.float64)
+        omega = np.array(state.omega_BN_B, dtype=np.float64)
+        omega_rw = np.array(state_rw.wheelSpeeds[0:3], dtype=np.float64)
 
         quat = MRPToQuat(sigma)
-        quat = np.array(quat, dtype=np.float32)
+        quat = np.array(quat, dtype=np.float64)
 
         
 
-        return np.concatenate([quat, omega, omega_rw]).astype(np.float32)
+        return np.concatenate([quat, omega, omega_rw]).astype(np.float64)
     
     def _get_koz_state(self, quat):
         
-        margins = np.zeros((self.MAX_ZONES, self.KOZ_FEATURE_DIM), dtype=np.float32)
+        koz_state = np.zeros((self.MAX_ZONES, self.KOZ_FEATURE_DIM), dtype=np.float64)
 
-        if self.n_zones > 0:
+        # TODO: support multiple KOZs
+        if self.current_nr_koz > 0:
             margin_koz = calc_margin_koz(quat, self.normal_vector_koz, self.half_angle_koz)
-            margins[:self.n_zones] = margin_koz
+            normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.normal_vector_koz, quat)
+            direction_vector_bf = normal_vector_bf - self.x_axis
+
+            koz_state[0][0] = np.array(margin_koz, dtype=np.float64) 
+            koz_state[0][1:4] = np.array(direction_vector_bf, dtype=np.float64)
 
         # TODO: sort
 
-        return margins
+        return koz_state
     
     def _get_koz_mask_state(self):
-        mask = np.zeros((self.MAX_ZONES,), dtype=np.float32)
-        mask[:self.n_zones] = 1
+        mask = np.zeros((self.MAX_ZONES,), dtype=np.float64)
+        mask[:self.current_nr_koz] = 1
 
         return mask
     
@@ -501,9 +595,9 @@ class BasiliskRWEnv(gym.Env):
         koz_mask_state = self._get_koz_mask_state()
 
         state = {
-            "satellite": sat_state.astype(np.float32),
-            "zones": koz_state.astype(np.float32),
-            "zones_mask": koz_mask_state.astype(np.float32)
+            "satellite": sat_state.astype(np.float64),
+            "zones": koz_state.astype(np.float64),
+            "zones_mask": koz_mask_state.astype(np.float64)
         }
 
         return state
@@ -519,69 +613,7 @@ class BasiliskRWEnv(gym.Env):
 
         self.rw_cmd_msg.write(cmd_payload, self.sim.TotalSim.CurrentNanos)
 
-    def _build_basilisk_sim(self, q_init, omega_init, omega_wheel_init):
-        self.sim = SimulationBaseClass.SimBaseClass()
-
-        process = self.sim.CreateNewProcess("dynProcess")
-        task_name = "dynTask"
-        process.addTask(
-            self.sim.CreateNewTask(task_name, macros.sec2nano(self.dt))
-        )
-
-        self._build_spacecraft(q_init, omega_init)
-
-        self.rw_effector = reactionWheelStateEffector.ReactionWheelStateEffector()
-        self.rw_effector.ModelTag = "reactionWheels"
-
-        rw_factory = simIncludeRW.rwFactory()
-        varRWModel = messaging.BalancedWheels
-
-        # Three orthogonal wheels, as configured in Bevo-2. Reaction wheel model: 3x Rocketlab 10 mNms-1
-        RW1 = rw_factory.create(
-            "custom",
-            [1.0, 0.0, 0.0],
-            Omega=float(omega_wheel_init[0]),
-            u_max=Constants.TORQUE_WHEEL_MAX,
-            Omega_max=Constants.SPEED_WHEEL_MAX,
-            maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            RWModel=varRWModel
-        )
-        RW2 = rw_factory.create(
-            "custom",
-            [0.0, 1.0, 0.0],
-            Omega=float(omega_wheel_init[1]),
-            u_max=Constants.TORQUE_WHEEL_MAX,
-            Omega_max=Constants.SPEED_WHEEL_MAX,
-            maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            RWModel=varRWModel
-        )
-        RW3 = rw_factory.create(
-            "custom",
-            [0.0, 0.0, 1.0],
-            Omega=float(omega_wheel_init[2]),
-            u_max=Constants.TORQUE_WHEEL_MAX,
-            Omega_max=Constants.SPEED_WHEEL_MAX,
-            maxMomentum=Constants.MOMENTUM_WHEEL_MAX,
-            RWModel=varRWModel
-        )
-
-        rw_factory.addToSpacecraft(
-            self.satellite.ModelTag,
-            self.rw_effector,
-            self.satellite,
-        )
-
-        # Stand-alone RW motor torque command message
-        cmd_payload = messaging.ArrayMotorTorqueMsgPayload()
-        cmd_payload.motorTorque = [0.0, 0.0, 0.0]
-
-        self.rw_cmd_msg = messaging.ArrayMotorTorqueMsg().write(cmd_payload)
-        self.rw_effector.rwMotorCmdInMsg.subscribeTo(self.rw_cmd_msg)
-
-        # Add modules to task.
-        # RW effector before spacecraft dynamics.
-        self.sim.AddModelToTask(task_name, self.rw_effector, 2)
-        self.sim.AddModelToTask(task_name, self.satellite, 1)
+    
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -606,19 +638,19 @@ class BasiliskRWEnv(gym.Env):
         omega_direction = np.random.randn(3)
         omega_direction_norm = np.linalg.norm(omega_direction)
         if omega_direction_norm < 1e-12:
-            omega_direction = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            omega_direction = np.array([1.0, 0.0, 0.0], dtype=np.float64)
         else:
             omega_direction = omega_direction / omega_direction_norm
         
         # Scale direction by magnitude
-        omega_initial = (omega_magnitude * omega_direction).astype(np.float32)
+        omega_initial = (omega_magnitude * omega_direction).astype(np.float64)
 
-        wheel_velocities_initial = np.zeros(3, dtype=np.float32)
+        wheel_velocities_initial = np.zeros(3, dtype=np.float64)
 
         # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
         self.normal_vector_koz, self.half_angle_koz = self._generate_keep_out_zone(q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
 
-        self.n_zones = 1
+        self.current_nr_koz = np.random.randint(self.min_nr_koz, self.max_nr_koz+1) # Excludes upper bound
         
         # Calculate margin angle to keep out zone
         margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
@@ -627,12 +659,12 @@ class BasiliskRWEnv(gym.Env):
         koz_state = self._get_koz_state(q_array_initial)
         koz_mask_state = self._get_koz_mask_state()
         self.state = {
-            "satellite": sat_state.astype(np.float32),
-            "zones": koz_state.astype(np.float32),
-            "zones_mask": koz_mask_state.astype(np.float32)
+            "satellite": sat_state.astype(np.float64),
+            "zones": koz_state.astype(np.float64),
+            "zones_mask": koz_mask_state.astype(np.float64)
         }
 
-        self.torque_prev = np.zeros(3, dtype=np.float32)
+        self.torque_prev = np.zeros(3, dtype=np.float64)
 
         # Initialize custom metrics for this episode
         self.initial_error_angle = 2 * math.acos(min(max(abs(q_array_initial[0]), 0.0), 1.0)) * 180 / np.pi  # degrees
@@ -652,10 +684,11 @@ class BasiliskRWEnv(gym.Env):
         if margin_koz < 0.0:
             self.entered_koz_count += 1
 
-        # Normalize observation
-        obs = self.state.copy()
+        # Copy state into observation
+        obs = copy.deepcopy(self.state)
 
-        self._build_basilisk_sim(q_array_initial, omega_initial, wheel_velocities_initial)
+        self.satellite = build_spacecraft(q_array_initial, omega_initial)
+        self.sim, self.rw_cmd_msg, self.rw_effector = build_basilisk_sim(wheel_velocities_initial, self.satellite, Constants.TIME_DELTA)
         self.sim.InitializeSimulation()
 
         return obs, {}
@@ -672,11 +705,11 @@ class BasiliskRWEnv(gym.Env):
 
         self.state = self._get_state()
         
-        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE)
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"])
 
         # Update KOZ metrics
         # Update min margin koz angle
-        margin_koz = 0
+        margin_koz = self.state["zones"][0][0] # TODO: support multiple KOZs
        
         if margin_koz < self.min_margin_koz:
             self.min_margin_koz = margin_koz
@@ -685,8 +718,8 @@ class BasiliskRWEnv(gym.Env):
         if margin_koz < 0.0:
             self.entered_koz_count += 1
 
-        # Normalize observation
-        obs = self.state.copy()
+        # Copy state into observation
+        obs = copy.deepcopy(self.state)
         
 
         self.episode_torques.append(np.linalg.norm(action * Constants.TORQUE_WHEEL_MAX))
@@ -741,16 +774,12 @@ class BasiliskRWEnv(gym.Env):
         Render the current state of the environment.
         Depending on the render mode, it either prints the state information or returns an RGB array representing the satellite's attitude.
         """
-        attitude = self.state[:4]
-        omega = self.state[4:7]*scale_angular_velocity_sat
-        torque = self.state[14:17]*scale_torque
 
         if self.render_mode == "human":
-            print(f"Step: {self.steps}, Attitude: {attitude}, Omega: {omega}, Torque: {torque}")
             return
 
         if self.render_mode == "rgb_array":
-            q = self.state[:4]
+            q = self.state["satellite"][:4]
 
             # Rotate the satellite body axis (x-axis) by the quaternion
             body_axis = rotate_vector_by_quaternion(self.x_axis, q)
@@ -798,8 +827,6 @@ class LSTM(BaseFeaturesExtractor):
         self.zones_max = zones_max
         self.lstm_in_dim = lstm_in_dim
 
-        # TODO: should i also convert the sat obs into a latent obs?
-        # e.g. sat_obs_dim (10) --> nn transformation (linear?) --> sat_obs_latent_dim (32?)
 
         # The LSTM 
         self.lstm = th.nn.LSTM(
@@ -807,7 +834,6 @@ class LSTM(BaseFeaturesExtractor):
             hidden_size=lstm_out_dim,
             num_layers=1, # TODO: clarify
             batch_first=True # Because TODO
-            #device=TODO
         )
 
     def forward(self, observations):
@@ -827,12 +853,12 @@ class LSTM(BaseFeaturesExtractor):
         non_zero_indices = non_zero_zones_mask.nonzero(as_tuple=True)[0]
 
         # Container for LSTM output of the entire batch
-        lstm_out = th.zeros(batch_size, self.lstm_out_dim, device=device)
+        self.lstm_out = th.zeros(batch_size, self.lstm_out_dim, device=device)
 
         # Number of batch obsverations with at least one KOZ
         non_zero_obs_count = non_zero_indices.numel()
 
-        # If there is at least one batch with KOZs, process the LSTM
+        # If there is at least one obs with KOZs, process the LSTM
         if non_zero_obs_count > 0:
 
             # Get all observations (and their KOZ count) with at least one KOZ from the batch
@@ -851,9 +877,9 @@ class LSTM(BaseFeaturesExtractor):
             output, (hidden_state_out, cell_state_out) = self.lstm(input=lstm_sequences)
 
             # Store the final hidden state of each batch observation
-            lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
+            self.lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
 
         # Combine satellite obs and LSTM output
-        combined = th.cat([sat_obs, lstm_out], dim=1)
+        combined = th.cat([sat_obs, self.lstm_out], dim=1)
 
         return combined
