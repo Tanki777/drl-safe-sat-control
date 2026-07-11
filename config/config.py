@@ -52,6 +52,7 @@ class Config():
         MAX_NR_KOZ = config_data["visualization"]["MAX_NR_KOZ"]
         CREATE_VIDEO = config_data["visualization"]["CREATE_VIDEO"]
         SHOW_BASILISK_VIZ = config_data["visualization"]["SHOW_BASILISK_VIZ"]
+        VIZARD_EXE_PATH = config_data["visualization"]["VIZARD_EXE_PATH"]
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]
