@@ -6,9 +6,15 @@ Author: Cemal Yilmaz - 2026
 
 import os
 import sys
+import subprocess
 import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
+import datetime
+from pathlib import Path
+from Basilisk.utilities import SimulationBaseClass, macros, vizSupport
+from Basilisk.simulation import spacecraft, vizInterface, simpleInstrument
+from Basilisk.architecture import sysModel, messaging
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,15 +25,278 @@ parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
 repo_parent_dir = os.path.dirname(repo_dir)
 video_dir = os.path.join(repo_parent_dir, "videos")
+viz_dir = os.path.join(repo_parent_dir, "viz_files")
 
-# Create evaluation data directory if it doesn't exist
+# Create video directory if it doesn't exist
 if not os.path.exists(video_dir):
     os.makedirs(video_dir)
 
+# Create viz directory if it does not exist
+if not os.path.exists(viz_dir):
+    os.makedirs(viz_dir)
+
 
 from agent_training.constants import Constants
+from agent_training.environment import quatToMRP
 from agent_simulation.evaluation import create_evaluation_env, load_agent, load_evaluation_data, simulate_episode
 from config.config import Config
+
+
+def _rotation_matrix_from_quaternion(quaternion):
+    """Return the body-to-inertial rotation matrix for a [w, x, y, z] quaternion."""
+    q0, q1, q2, q3 = quaternion
+
+    return np.array([
+        [1 - 2 * (q2 * q2 + q3 * q3), 2 * (q1 * q2 - q3 * q0), 2 * (q1 * q3 + q2 * q0)],
+        [2 * (q1 * q2 + q3 * q0), 1 - 2 * (q1 * q1 + q3 * q3), 2 * (q2 * q3 - q1 * q0)],
+        [2 * (q1 * q3 - q2 * q0), 2 * (q2 * q3 + q1 * q0), 1 - 2 * (q1 * q1 + q2 * q2)],
+    ])
+
+
+def _normalize_vector(vector):
+    vector = np.asarray(vector, dtype=np.float64)
+    norm = np.linalg.norm(vector)
+
+    if norm < 1e-12:
+        return vector
+    
+    return vector / norm
+
+
+
+
+class EpisodeReplayPublisher(sysModel.SysModel):
+    """
+    Publish previously recorded spacecraft and reaction-wheel states as
+    Basilisk messages.
+    """
+
+    def __init__(
+        self,
+        times: list,
+        quaternions: list,
+        angular_velocities: list,
+        wheel_torques: list,
+        wheel_speeds: list
+    ):
+        super().__init__()
+
+        self.ModelTag = "episodeReplayPublisher"
+
+        self.times = times
+        self.quaternions = quaternions
+        self.angular_velocities = angular_velocities
+        self.wheel_torques = wheel_torques
+        self.wheel_speeds = wheel_speeds
+
+        self.num_samples = len(self.times)
+        self.num_wheels = self.wheel_torques.shape[1]
+
+
+        # Fixed location at origin as we only care about attitude.
+        self.positions = np.tile(
+            np.array([0.0, 0.0, 0.0]),
+            (self.num_samples, 1),
+        )
+
+        # No translational velocity as we only care about attitude.
+        self.translational_velocities = np.zeros(
+            (self.num_samples, 3),
+            dtype=np.float64,
+        )
+
+        # Satellite state message
+        self.sc_state_out_msg = messaging.SCStatesMsg()
+        self.body_x_axis_marker_out_msg = messaging.SCStatesMsg()
+
+        # Reaction wheel state messages
+        self.rw_state_out_msgs = [
+            messaging.RWConfigLogMsg()
+            for _ in range(self.num_wheels)
+        ]
+
+        self.sample_index = 0
+
+    def Reset(self, current_sim_nanos):
+        self.sample_index = 0
+
+    def UpdateState(self, current_sim_nanos):
+        index = min(self.sample_index, self.num_samples - 1)
+
+        q = self.quaternions[index].copy()
+        
+        # Convert to MRP since that is what Basilisk uses for attitude.
+        sigma_BN = quatToMRP(q)
+
+        # The message payload which contains the next satellite state
+        sc_payload_msg = messaging.SCStatesMsgPayload()
+        sc_payload_msg.r_BN_N = self.positions[index].tolist()
+        sc_payload_msg.v_BN_N = self.translational_velocities[index].tolist()
+        sc_payload_msg.sigma_BN = np.asarray(sigma_BN).tolist()
+        sc_payload_msg.omega_BN_B = self.angular_velocities[index].tolist()
+
+        # Forward the next satellite state to Basilisk simulation.
+        self.sc_state_out_msg.write(
+            sc_payload_msg,
+            current_sim_nanos
+        )
+
+        # For each reaction wheel, add the next state to the payload message and forward to Basilisk simulation.
+        for wheel_index, rw_msg in enumerate(self.rw_state_out_msgs):
+            rw_payload_msg = messaging.RWConfigLogMsgPayload()
+
+            rw_payload_msg.Omega = float(
+                self.wheel_speeds[index, wheel_index]
+            )
+            rw_payload_msg.u_current = float(
+                self.wheel_torques[index, wheel_index]
+            )
+
+            rw_msg.write(
+                rw_payload_msg,
+                current_sim_nanos
+            )
+
+        # Increase the sample index if not end of episode.
+        if self.sample_index < self.num_samples - 1:
+            self.sample_index += 1
+
+
+def create_koz(koz_normal_vector, koz_half_angle, koz_name, koz_idx, viz):
+
+    # Color picker
+    koz_colors = ["red", "green", "blue", "yellow"]
+
+    koz_distance = 1*10**10 # Very far away to simulate fixed point in world frame
+    koz_payload_msg = messaging.SCStatesMsgPayload()
+    koz_payload_msg.r_BN_N = (koz_distance * koz_normal_vector).tolist()
+    koz_payload_msg.sigma_BN = [0,0,0]
+    koz_msg = messaging.SCStatesMsg()
+    koz_msg.write(koz_payload_msg)
+
+    koz_sc_data = vizInterface.VizSpacecraftData()
+    koz_sc_data.spacecraftName = koz_name
+    koz_sc_data.scStateInMsg.subscribeTo(koz_msg)
+
+    # Use a simple sphere model for the KOZ object
+    vizSupport.createCustomModel(
+        viz,
+        modelPath="SPHERE",
+        simBodiesToModify=[koz_name],
+        scale=[0.01, 0.01, 0.01]
+    )
+
+    # Create Cone attached to satellite
+    vizSupport.createConeInOut(viz, toBodyName=koz_name, coneColor=vizSupport.toRGBA255(koz_colors[koz_idx], alpha=0.1),
+                               isKeepIn=False, normalVector_B=[1,0,0], incidenceAngle=koz_half_angle,
+                               coneHeight=0.25, fromBodyName="satellite")
+    
+    # Create line from satellite to KOZ normal vector
+    vizSupport.createPointLine(viz, toBodyName=koz_name, lineColor=vizSupport.toRGBA255(koz_colors[koz_idx], alpha=0.1), fromBodyName="satellite")
+
+    # Need to return koz_msg to prevent being deleted.
+    return koz_sc_data, koz_msg
+
+
+def save_episode_as_viz(
+    output_file: str,
+    episode_data: dict,
+    save_file: bool,
+    vizard_exe: str
+):
+    
+    if not save_file:
+        return
+    
+    output_path = Path(output_file).resolve()
+  
+    # Create Basilisk simulation and process
+    sim = SimulationBaseClass.SimBaseClass()
+    process = sim.CreateNewProcess("replayProcess")
+    task_name = "replayTask"
+
+    # Add replay task
+    process.addTask(
+        sim.CreateNewTask(
+            task_name,
+            macros.sec2nano(Constants.TIME_DELTA) # task rate
+        )
+    )
+
+    # Get the episode data as a model
+    replay = EpisodeReplayPublisher(
+        times=episode_data["times"],
+        quaternions=episode_data["quaternion"],
+        angular_velocities=episode_data["omega"],
+        wheel_torques=episode_data["torques"],
+        wheel_speeds=episode_data["omega_wheels"],
+    )
+
+    # Add replay data model to task
+    sim.AddModelToTask(task_name, replay)
+
+    # Dummy satellite object for properly creating viz interface
+    sat_dummy = spacecraft.Spacecraft()
+    sat_dummy.ModelTag = "satellite"
+
+    # Create the vizard interface
+    viz: vizInterface.VizInterface = vizSupport.enableUnityVisualization(sim, task_name, sat_dummy, saveFile=str(output_path))
+    viz.scData.clear() # Clear dummy satellite state
+
+    # Create sensor for boresight axis
+    sensor = vizInterface.GenericSensor()
+    sensor.r_SB_B = [0,0,0]
+    sensor.fieldOfView = vizInterface.DoubleVector([0.01])
+    sensor.normalVector = [1,0,0]
+    sensor.color = vizInterface.IntVector(vizSupport.toRGBA255("green"))
+    sensor.label = "sensor1"
+    sensor.size = 0.25
+
+    # Configure and populate the vizard satellite data
+    sc_data = vizInterface.VizSpacecraftData()
+    sc_data.spacecraftName = "satellite"
+
+    sc_data.scStateInMsg.subscribeTo( # satellite state
+        replay.sc_state_out_msg
+    )
+
+    sc_data.rwInMsgs = messaging.RWConfigLogMsgInMsgsVector( # reaction wheel states
+        [rw_msg.addSubscriber() for rw_msg in replay.rw_state_out_msgs]
+    )
+
+    sc_data.modelDictionaryKey = "3Usat" # use 3U CubeSat model
+    sc_data.genericSensorList = vizInterface.GenericSensorVector([sensor])
+
+    # Create KOZ. Need to return koz_msg to prevent being deleted.
+    koz1_sc_data, koz1_msg = create_koz(episode_data["normal_vector_koz"], episode_data["half_angle_koz"], "koz1", 0, viz)
+    koz2_sc_data, koz2_msg = create_koz(np.array([1,0,0]), 0.1, "koz2", 1, viz)
+
+    
+
+    # Add the satellite data to vizard
+    viz.scData.push_back(sc_data)
+    viz.scData.push_back(koz1_sc_data)
+    viz.scData.push_back(koz2_sc_data)
+
+    # Vizard settings
+    settings: vizInterface.VizSettings = viz.settings
+
+    settings.spacecraftCSon = -1
+    settings.showCSLabels = -1
+   
+    sim.InitializeSimulation()
+
+    stop_time = float(episode_data["times"][-1])
+
+    # Add a small fraction of dt so that the final sample is processed.
+    sim.ConfigureStopTime(
+        macros.sec2nano(stop_time + 0.5 * Constants.TIME_DELTA)
+    )
+
+    sim.ExecuteSimulation()
+
+    # Start Vizard and load the file
+    subprocess.Popen([vizard_exe, "--args", "-loadFile", output_path])
 
 
 def print_result(phi_final, omega_final, cumulative_reward_final):
@@ -86,11 +355,14 @@ def plot_actual_attitude(simulation_data: dict):
     rewards_array = simulation_data["rewards"]
     cumulative_rewards = simulation_data["cumulative_rewards"]
     times = simulation_data["times"]
-    normal_vector_koz = simulation_data["normal_vector_koz"]
+    normal_vector_koz = simulation_data["normal_vector_koz"] # normal vector in world frame
     half_angle_koz = simulation_data["half_angle_koz"]
     margin_angles_koz = simulation_data["margin_angles_koz"]
+    direction_koz = simulation_data["direction_koz"] # normal vector in body frame
     min_margin_koz = simulation_data["min_margin_koz"]
     cnt_Koz_violations = simulation_data["cnt_Koz_violations"]
+    lstm_output = simulation_data["lstm_output"]
+
 
     print("Minimum margin KOZ:", min_margin_koz*180/np.pi, "degrees")
     print("Count KOZ violations:", cnt_Koz_violations)
@@ -132,7 +404,7 @@ def plot_actual_attitude(simulation_data: dict):
     fig = plt.figure(figsize=(18, 12))
     
     # 3D Rotation Axis Trajectory (This is the key trajectory for phi angle!)
-    ax1 = fig.add_subplot(241, projection="3d")
+    ax1 = fig.add_subplot(341, projection="3d")
     
     # Plot trajectory on unit sphere (rotation axes are unit vectors)
     ax1.plot(body_axis_arr[:, 0], body_axis_arr[:, 1], body_axis_arr[:, 2], "b-", alpha=0.7, linewidth=3, label="Boresight Axis Trajectory")
@@ -195,7 +467,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.legend()
     
     # Rotation angle φ vs time (same as in reward function)
-    ax2 = fig.add_subplot(242)
+    ax2 = fig.add_subplot(342)
     ax2.plot(times[:len(rotation_angles_deg)], rotation_angles_deg, "purple", linewidth=3, label="Angle $\\phi$")
     ax2.axhline(y=0.25, color="r", linestyle="--", linewidth=2, label="Accuracy Threshold (0.25°)")
     ax2.set_xlabel("Time (s)")
@@ -206,7 +478,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax2.set_yscale("log")
     
     # Cumulative Reward vs Time
-    ax3 = fig.add_subplot(243)  # New subplot for cumulative reward
+    ax3 = fig.add_subplot(343)  # New subplot for cumulative reward
     ax3.plot(times[:len(cumulative_rewards)], cumulative_rewards, "orange", linewidth=3, label="Cumulative Reward")
     ax3.plot(times[:len(rewards_array)], rewards_array, "lightcoral", alpha=0.6, linewidth=1, label="Step Reward")
     ax3.set_xlabel("Time (s)")
@@ -216,7 +488,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax3.legend()
     
     # Plot quaternion
-    ax4 = fig.add_subplot(244)
+    ax4 = fig.add_subplot(344)
     ax4.plot(times, q_0, label="$q_0$")
     ax4.plot(times, q_1, label="$q_1$")
     ax4.plot(times, q_2, label="$q_2$")
@@ -228,7 +500,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax4.grid()
 
     # Plot angular velocity
-    ax5 = fig.add_subplot(245)
+    ax5 = fig.add_subplot(345)
     ax5.plot(times, omega_x * (180 / np.pi), label="$\\omega_x$")
     ax5.plot(times, omega_y * (180 / np.pi), label="$\\omega_y$")
     ax5.plot(times, omega_z * (180 / np.pi), label="$\\omega_z$")
@@ -238,7 +510,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax5.grid()
 
     # Plot wheel velocity
-    ax5_2 = fig.add_subplot(246)
+    ax5_2 = fig.add_subplot(346)
     ax5_2.plot(times, omega_w_x, label="$\\omega_{w,x}$")
     ax5_2.plot(times, omega_w_y, label="$\\omega_{w,y}$")
     ax5_2.plot(times, omega_w_z, label="$\\omega_{w,z}$")
@@ -248,7 +520,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax5_2.grid()
 
     # Plot torque input
-    ax6 = fig.add_subplot(247)
+    ax6 = fig.add_subplot(347)
     ax6.plot(times, torques_array[:, 0], label="$\\tau_1$")
     ax6.plot(times, torques_array[:, 1], label="$\\tau_2$")
     ax6.plot(times, torques_array[:, 2], label="$\\tau_3$")
@@ -259,12 +531,31 @@ def plot_actual_attitude(simulation_data: dict):
     ax6.grid()
 
     # Plot keep out zone margin angle
-    ax7 = fig.add_subplot(248)
-    ax7.plot(times, margin_angles_koz, label="Margin Angle KOZ")
+    ax7 = fig.add_subplot(348)
+    ax7.plot(times, margin_angles_koz[:, 0], label="Margin Angle KOZ") # TODO: support multiple KOZs
     ax7.set_title("Keep Out Zone Margin Angle")
     ax7.set_ylabel("Angle (degrees)")
     ax7.legend()
     ax7.grid()
+
+    # Plot keep out zone direction vector (body frame)
+    ax8 = fig.add_subplot(349)
+    ax8.plot(times, direction_koz[:, 0, 0], label="x") # TODO: support multiple KOZs
+    ax8.plot(times, direction_koz[:, 0, 1], label="y") # TODO: support multiple KOZs
+    ax8.plot(times, direction_koz[:, 0, 2], label="z") # TODO: support multiple KOZs
+    ax8.set_title("Keep Out Zone Direction Vector (Body Frame)")
+    ax8.legend()
+    ax8.grid()
+
+    # Plot LSTM output
+    ax9 = fig.add_subplot(3,4,10)
+    ax9.plot(times, lstm_output[:, 0, 0], label="$h_0$") # TODO: support multiple KOZs
+    ax9.plot(times, lstm_output[:, 0, 1], label="$h_1$") # TODO: support multiple KOZs
+    ax9.plot(times, lstm_output[:, 0, 2], label="$h_2$") # TODO: support multiple KOZs
+    ax9.plot(times, lstm_output[:, 0, 3], label="$h_3$") # TODO: support multiple KOZs
+    ax9.set_title("LSTM Output (Hidden States)")
+    ax9.legend()
+    ax9.grid()
     
     plt.tight_layout()
     plt.show()
@@ -470,15 +761,22 @@ if __name__ == "__main__":
         Config.Visualization.MAX_INITIAL_ANGULAR_VELOCITY,
         Config.Visualization.MAX_STEPS,
         Config.Visualization.MIN_HALF_ANGLE_KOZ,
-        Config.Visualization.MAX_HALF_ANGLE_KOZ
+        Config.Visualization.MAX_HALF_ANGLE_KOZ,
+        Config.Visualization.MIN_NR_KOZ,
+        Config.Visualization.MAX_NR_KOZ
     ]
+
+    time_human = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
     eval_env = create_evaluation_env(INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP)
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True)
 
     """ Uncomment the lines below to run 1 simulation and plot the results. """
     simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO)
-    plot_actual_attitude(simulation_data)
+    #visualize_episode_basilisk(simulation_data, show_basilisk_viz=Config.Visualization.SHOW_BASILISK_VIZ)
+    viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
+    save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
+    #plot_actual_attitude(simulation_data)
     #plot_for_report(simulation_data, time_end=300)
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
