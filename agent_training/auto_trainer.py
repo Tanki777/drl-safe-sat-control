@@ -203,7 +203,9 @@ def do_scheduled_training(model_name, schedule, continue_training):
             phase.get("max_initial_angular_velocity", 0.1),
             phase.get("max_steps", 500),
             phase.get("min_half_angle_koz", 0.0),
-            phase.get("max_half_angle_koz", 0.0)
+            phase.get("max_half_angle_koz", 0.0),
+            phase.get("min_nr_koz", 0),
+            phase.get("max_nr_koz", 0)
         ]
 
         # Create the training environment

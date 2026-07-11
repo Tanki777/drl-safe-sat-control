@@ -35,6 +35,8 @@ class Config():
         MAX_INITIAL_ANGULAR_VELOCITY = config_data["evaluation"]["MAX_INITIAL_ANGULAR_VELOCITY"]
         MIN_HALF_ANGLE_KOZ = config_data["evaluation"]["MIN_HALF_ANGLE_KOZ"]
         MAX_HALF_ANGLE_KOZ = config_data["evaluation"]["MAX_HALF_ANGLE_KOZ"]
+        MIN_NR_KOZ = config_data["visualization"]["MIN_NR_KOZ"]
+        MAX_NR_KOZ = config_data["visualization"]["MAX_NR_KOZ"]
 
     class Visualization():
         MODEL_NAME = config_data["visualization"]["MODEL_NAME"]
@@ -46,7 +48,10 @@ class Config():
         MAX_INITIAL_ANGULAR_VELOCITY = config_data["visualization"]["MAX_INITIAL_ANGULAR_VELOCITY"]
         MIN_HALF_ANGLE_KOZ = config_data["visualization"]["MIN_HALF_ANGLE_KOZ"]
         MAX_HALF_ANGLE_KOZ = config_data["visualization"]["MAX_HALF_ANGLE_KOZ"]
+        MIN_NR_KOZ = config_data["visualization"]["MIN_NR_KOZ"]
+        MAX_NR_KOZ = config_data["visualization"]["MAX_NR_KOZ"]
         CREATE_VIDEO = config_data["visualization"]["CREATE_VIDEO"]
+        SHOW_BASILISK_VIZ = config_data["visualization"]["SHOW_BASILISK_VIZ"]
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]
