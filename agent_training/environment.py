@@ -882,4 +882,13 @@ class LSTM(BaseFeaturesExtractor):
         # Combine satellite obs and LSTM output
         combined = th.cat([sat_obs, self.lstm_out], dim=1)
 
+        ####################
+        # for param_name, param in self.lstm.named_parameters():
+        #     # Get the parameter tensor
+        #     param_value = param.detach().cpu()
+
+        #     # Separate weights and biases per gate and convert from tensor --> list.
+        #     input_values = param_value[0:self.lstm_out_dim].tolist()
+        #     print(f"{param_name}: {input_values}")
+
         return combined
