@@ -75,6 +75,21 @@ def normalize_vector(v):
 
 
 @njit
+def calc_vector_norm(v):
+    """
+    Calculate the norm of a 3D vector.
+    Args:
+        v: Input vector as a numpy array [x, y, z].
+    Returns:
+        norm: The norm of the vector.
+    """
+    #norm = np.linalg.norm(v)
+    norm = np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)   # using custom calculation of norm in order to use numba
+    
+    return norm
+
+
+@njit
 def rotate_vector_by_quaternion(v, q):
     """
     Rotate a vector v by a quaternion q.
@@ -246,7 +261,8 @@ def build_basilisk_sim(omega_wheel_init, satellite, dt) -> tuple[SimulationBaseC
     return sim, rw_cmd_msg, rw_effector
 
 
-def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz):
+@njit
+def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed):
     q0_current = state[0]
     ang_vel_sat_x = state[4]
     ang_vel_sat_y = state[5]
@@ -271,8 +287,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz):
     err_phi_current = err_phi_current * 180.0 / np.pi
     err_phi_prev = err_phi_prev * 180.0 / np.pi
 
+    err_phi_delta = err_phi_prev - err_phi_current
+
+    #ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
+
     r_total = 0
-    USE_REWARD = "prakModTorqueDiff"
+    USE_REWARD = "mod31"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -336,36 +356,840 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz):
         # Penalty for using large torques
         r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
 
-        r_total = r1 + r3 + r4
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            else:
+                r5 = -1.0*math.exp(-66.0*margin_koz)
 
-    if USE_REWARD == "prakModTorqueDiff":
+        r_total = r1 + r3 + r4 + r5
+
+    if USE_REWARD == "prakModAcc":
         # Reward for reducing attitude error
         r1 = (err_phi_prev - err_phi_current)  # positive if error decreased
 
-        # Penalty for frequently changing torque
-        r2 = -10.0* (np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2))
-
         # Bonus for high accuracy
-        r3 = 0.0
+        r2 = 0.0
+        # Bonus for desired accuracy
         if err_phi_current < 0.25:
-            r3 = 0.01  # bonus for reaching the goal
+            if phase == 2:
+                r2 = 0.5
+            else:
+                r2 = 0.1
+        # Gradial bonus for getting closer to target when already close to target
+        elif err_phi_current < 5.0:
+            r2 = 0.1*math.exp(-0.35*err_phi_current)
+        # Penalty if farther away
         else:
-            r3 = -0.01
+            r2 = -0.01
+
+        # Penalty for high angular velocity (more than 0.1 rad/s or 5.7 deg/s)
+        r3 = 0.0
+        if (ang_vel_sat_x > 0.1) or (ang_vel_sat_y > 0.1) or (ang_vel_sat_z > 0.1):
+            r3 = -1.0
 
         # Penalty for using large torques
         r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
 
-        r_total = r1 + r2 + r3 + r4
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0*math.exp(-10.0*margin_koz)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
 
-    # Penalty for entering / being close to keep out zone
-    r5 = 0.0
-    if phase == 2:
-        if margin_koz <= 0.0:
-            r5 = -1.0
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod2":
+        """
+        Goal: reduce violation rate.
+        Result: very good.
+        Note: pointing accuracy still does not recover.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            r1 = err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.2:
+            r2 = 0.02
+        elif err_phi_current < 0.25:
+            r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+        # Penalty if farther away
         else:
-            r5 = -1.0*math.exp(-66.0*margin_koz)
+            r2 = -0.01
 
-    return r_total + r5
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod22":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: Settling rate improved from 10% to 50%
+        Note: bad reward design: if koz violation, no bonus for accuracy but violation penalty not hard enough.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 += 0.01
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                    if err_phi_current > 0.25:
+                        r1 += 0.01
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * (((0.25-err_phi_current)/0.1) + 0.5)
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * (((0.25-err_phi_current)/0.1) + 0.5)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod23":
+        """
+        Goal: recover pointing accuracy in phase 2 (improve mod22).
+        Result: Adding the -0.01 penalty makes both accuracy and violation worse.
+        Note: Added -0.01 penalty when not within desired accuracy.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 += 0.01
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                    if err_phi_current > 0.25:
+                        r1 += 0.01
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * (((0.25-err_phi_current)/0.1) + 0.5)
+            else:
+                r2 = -0.01
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = -0.1
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * (((0.25-err_phi_current)/0.1) + 0.5)
+            else:
+                r2 = -0.01
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod24":
+        """
+        Goal: recover pointing accuracy in phase 2 (improve mod22).
+        Result: worse than before
+        Note: Increased bonus for desired pointing accuracy
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 += 0.01
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                    if err_phi_current > 0.25:
+                        r1 += 0.01
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.1
+            elif err_phi_current < 0.25:
+                r2 = 0.1 * (((0.25-err_phi_current)/(10.0/9.0 * 0.05)) + 0.1)
+            
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.1
+            elif err_phi_current < 0.25:
+                r2 = 0.1 * (((0.25-err_phi_current)/(10.0/9.0 * 0.05)) + 0.1)
+            
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod25":
+        """
+        Goal: recover pointing accuracy in phase 2 (improve mod22).
+        Result: Worse
+        Note: Removed constant terms for reducing attitude error. Removed torque penalty. Adjusted pointing bonus.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.0 * err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.0 * err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.25:
+                r2 = 0.02 + 0.1*(0.25-err_phi_current) 
+    
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.25:
+                r2 = 0.02 + 0.1*(0.25-err_phi_current) 
+            
+        # Penalty for using large torques
+        r4 = 0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod26":
+        """
+        Goal: recover pointing accuracy in phase 2 (improve mod22).
+        Result: 
+        Note: Removed constant terms for reducing attitude error. Removed torque penalty. Adjusted pointing bonus.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.0 * err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.0 * err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.25:
+                r2 = 0.04 + 0.1*(0.25-err_phi_current)
+            # Bonus for being close to desired accuracy
+            elif err_phi_current < 2.0:
+                r2 = 0.04 * (1.0/(2.0-0.25) * (2.0-err_phi_current))**2
+    
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.25:
+                r2 = 0.04 + 0.1*(0.25-err_phi_current)
+            # Bonus for being close to desired accuracy
+            elif err_phi_current < 2.0:
+                r2 = 0.04 * (1.0/(2.0-0.25) * (2.0-err_phi_current))**2
+            
+        # Penalty for using large torques
+        r4 = 0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        #print(f"DEBUG err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(margin_koz*180/np.pi):.2f}, r1 {r1:.3f}, r2 {r2:.3f}, , r3 {r3:.3f}, , r4 {r4:.3f}, , r5 {r5:.3f}")
+
+        r_total = r1 + r2 + r4 + r5
+        #print(f"err_delta {err_phi_delta:.3f}, err_cur {err_phi_current:.3f}, margin {margin_koz:.3f}")
+        #print(f"r1 {r1:.3f}, r2 {r2:.3f}, r4 {r4:.3f}, r5 {r5:.3f}")
+
+    if USE_REWARD == "mod27":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: higher accuracy bonus, s-shaped function.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            if err_phi_delta >= 0:
+                r1 = err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 += 0.01
+            # Increasing error is punished more than decreasing error is rewarded
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                    if err_phi_current > 0.25:
+                        r1 += 0.01
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = 1.2 * err_phi_delta
+                if err_phi_current > 0.25:
+                    r1 -= 0.012
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.25:
+                r2 = 0.01 + 0.2*(np.cbrt(0.125) - np.cbrt(err_phi_current - 0.125)) # [0.01, 0.21]
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.25:
+                r2 = 0.01 + 0.2*(np.cbrt(0.125) - np.cbrt(err_phi_current - 0.125))
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod28":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: rmeove constant term in r1. remove different weighting in r1.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            r1 = err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod29":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: rmeove constant term in r1. remove different weighting in r1. remove torque penalty.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            r1 = err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+        elif phase == 2:
+            # No accuracy bonus if violated KOZ
+            if koz_violation_cnt > 0:
+                r2 = 0.0
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+
+        # Penalty for using large torques
+        r4 = 0.0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod30":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: rmeove constant term in r1. remove different weighting in r1. remove torque penalty. add back bad accuracy penalty
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            r1 = err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+        elif phase == 2:
+            # Penalty if violated KOZ or not within desired accuracy
+            if koz_violation_cnt > 0 or err_phi_current >= 0.25:
+                r2 = -0.04
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+
+        # Penalty for using large torques
+        r4 = 0.0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod31":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: rmeove constant term in r1. remove different weighting in r1. remove torque penalty.
+                change bad accuracy penalty to based on timestep
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == 1:
+            r1 = err_phi_delta
+            
+        # Phase 2
+        else:      
+            if err_phi_delta >= 0:
+                if margin_koz > 0.17:
+                    r1 = err_phi_delta
+                elif margin_koz > 0:
+                    r1 = err_phi_delta * (margin_koz/0.17)
+                else:
+                    r1 = 0
+            
+            else:
+                r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == 1:
+            # Bonus for desired accuracy
+            if err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+        elif phase == 2:
+            # Penalty if violated KOZ or not within desired accuracy
+            if koz_violation_cnt > 0 or err_phi_current >= 0.25:
+                r2 = -0.000005 * time_elapsed**2 * err_phi_current
+            # Bonus for desired accuracy
+            elif err_phi_current < 0.2:
+                r2 = 0.02
+            elif err_phi_current < 0.25:
+                r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+            
+
+        # Penalty for using large torques
+        r4 = 0.0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    return r_total
 
 
 class BasiliskRWEnv(gym.Env):
@@ -705,7 +1529,7 @@ class BasiliskRWEnv(gym.Env):
 
         self.state = self._get_state()
         
-        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"])
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt)
 
         # Update KOZ metrics
         # Update min margin koz angle
@@ -878,6 +1702,7 @@ class LSTM(BaseFeaturesExtractor):
 
             # Store the final hidden state of each batch observation
             self.lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
+            #self.lstm_out[non_zero_indices] = zones_obs[non_zero_indices, 0]
 
         # Combine satellite obs and LSTM output
         combined = th.cat([sat_obs, self.lstm_out], dim=1)
