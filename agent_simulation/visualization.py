@@ -557,6 +557,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax9.legend()
     ax9.grid()
     
+   
     plt.tight_layout()
     plt.show()
 
@@ -776,12 +777,13 @@ if __name__ == "__main__":
     #visualize_episode_basilisk(simulation_data, show_basilisk_viz=Config.Visualization.SHOW_BASILISK_VIZ)
     viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
     save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
-    #plot_actual_attitude(simulation_data)
+    plot_actual_attitude(simulation_data)
+
     #plot_for_report(simulation_data, time_end=300)
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
         loaded contains ALL episodes, therefore in loaded[] should be the index of the episode you want to plot.
     """
-    #loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_bothPhases_3000000_[90.0, 120.0, 0.0, 0.01, 3000, 25.0, 30.0]_ep[100]_2026-06-23-17-33-58.npz")
-    #plot_actual_attitude(loaded[2])
+    #loaded = load_evaluation_data("rewMod22_phFull_3_ph2_4000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[1000]_2026-07-16-16-39-32.npz")
+    #plot_actual_attitude(loaded[708])
     #plot_for_report(loaded[0],time_end=300)
