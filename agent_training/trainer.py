@@ -20,6 +20,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecNorm
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import HParam
+from stable_baselines3.common.utils import get_schedule_fn
 
 from agent_training import environment as sat_env
 from agent_training.environment import LSTM
@@ -216,8 +217,7 @@ class CustomCallback(BaseCallback):
                 else:
                     mean_value = sum(values) / len(values)
                 # Log to TensorBoard using the logger
-                if mean_value:
-                    self.logger.record(f"custom/{metric_name}_mean", mean_value)
+                self.logger.record(f"custom/{metric_name}_mean", mean_value)
             
                 # Log max values
                 if metric_name in ["final_error_angle", "settling_time", "initial_error_angle"]:
@@ -340,8 +340,6 @@ def create_environment(model_name, initial_state=None, phase_name=None):
 
     else:
         env = make_vec_env(sat_env.BasiliskRWEnv, n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
-    
-    #env = VecNormalize(env)
 
     return env
 
@@ -407,8 +405,19 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             # Update tensorboard log directory to continue logging
             model.tensorboard_log = log_path
 
-            # DEBUG overwrite gradient step
-            model.gradient_steps = -1
+            # Overwrite learning rate
+            # lr = 2e-5
+            # model.lr_schedule = get_schedule_fn(lr)
+
+            # # Update all optimizers
+            # for optimizer in [
+            #     model.actor.optimizer,
+            #     model.critic.optimizer,
+            #     model.ent_coef_optimizer,   # if ent_coef='auto'
+            # ]:
+            #     if optimizer is not None:
+            #         for param_group in optimizer.param_groups:
+            #             param_group["lr"] = lr
             
         except Exception as e:
             print(f"|-----{RED_START}Failed to load model: {e}{COLOR_END}")
@@ -440,7 +449,7 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             )
         )
 
-        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=1,verbose=1, device=Config.General.DEVICE,
+        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
                     tensorboard_log=log_path, seed=None, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
