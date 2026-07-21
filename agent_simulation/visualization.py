@@ -198,6 +198,45 @@ def create_koz(koz_normal_vector, koz_half_angle, koz_name, koz_idx, viz):
     return koz_sc_data, koz_msg
 
 
+def create_axis(vector: np.ndarray, name, color, viz):
+    distance = 1*10**10 # Very far away to simulate fixed point in world frame
+    payload_msg = messaging.SCStatesMsgPayload()
+    payload_msg.r_BN_N = (distance * vector).tolist()
+    payload_msg.sigma_BN = [0,0,0]
+    msg = messaging.SCStatesMsg()
+    msg.write(payload_msg)
+
+    sc_data = vizInterface.VizSpacecraftData()
+    sc_data.spacecraftName = name
+    sc_data.scStateInMsg.subscribeTo(msg)
+
+    # Use a simple sphere model for the KOZ object
+    vizSupport.createCustomModel(
+        viz,
+        modelPath="SPHERE",
+        simBodiesToModify=[name],
+        scale=[0.01, 0.01, 0.01]
+    )
+    
+    # Create line from satellite to target body
+    vizSupport.createPointLine(viz, toBodyName=name, lineColor=vizSupport.toRGBA255(color, alpha=0.1), fromBodyName="satellite")
+
+    # Need to return msg to prevent being deleted.
+    return sc_data, msg
+
+
+def create_satellite_axis(name, vector: np.ndarray):
+    sensor = vizInterface.GenericSensor()
+    sensor.r_SB_B = [0,0,0]
+    sensor.fieldOfView = vizInterface.DoubleVector([0.01])
+    sensor.normalVector = vector
+    sensor.color = vizInterface.IntVector(vizSupport.toRGBA255("blue"))
+    sensor.label = name
+    sensor.size = 0.25
+
+    return sensor
+
+
 def save_episode_as_viz(
     output_file: str,
     episode_data: dict,
@@ -243,14 +282,10 @@ def save_episode_as_viz(
     viz: vizInterface.VizInterface = vizSupport.enableUnityVisualization(sim, task_name, sat_dummy, saveFile=str(output_path))
     viz.scData.clear() # Clear dummy satellite state
 
-    # Create sensor for boresight axis
-    sensor = vizInterface.GenericSensor()
-    sensor.r_SB_B = [0,0,0]
-    sensor.fieldOfView = vizInterface.DoubleVector([0.01])
-    sensor.normalVector = [1,0,0]
-    sensor.color = vizInterface.IntVector(vizSupport.toRGBA255("green"))
-    sensor.label = "sensor1"
-    sensor.size = 0.25
+    # Create dummy sensors for satellite axes
+    sat_axis_x = create_satellite_axis("sat_axis_x", np.array([1,0,0]))
+    sat_axis_y = create_satellite_axis("sat_axis_y", np.array([0,1,0]))
+    sat_axis_z = create_satellite_axis("sat_axis_z", np.array([0,0,1]))
 
     # Configure and populate the vizard satellite data
     sc_data = vizInterface.VizSpacecraftData()
@@ -265,18 +300,22 @@ def save_episode_as_viz(
     )
 
     sc_data.modelDictionaryKey = "3Usat" # use 3U CubeSat model
-    sc_data.genericSensorList = vizInterface.GenericSensorVector([sensor])
+    sc_data.genericSensorList = vizInterface.GenericSensorVector([sat_axis_x, sat_axis_y, sat_axis_z])
 
     # Create KOZ. Need to return koz_msg to prevent being deleted.
     koz1_sc_data, koz1_msg = create_koz(episode_data["normal_vector_koz"], episode_data["half_angle_koz"], "koz1", 0, viz)
-    koz2_sc_data, koz2_msg = create_koz(np.array([1,0,0]), 0.1, "koz2", 1, viz)
-
-    
+    #koz2_sc_data, koz2_msg = create_koz(np.array([1,0,0]), 0.1, "koz2", 1, viz)
+    target_x_sc_data, target_x_msg = create_axis(np.array([1,0,0]), "target_x", "white", viz)
+    target_y_sc_data, target_y_msg = create_axis(np.array([0,1,0]), "target_y", "teal", viz)
+    target_z_sc_data, target_z_msg = create_axis(np.array([0,0,1]), "target_z", "teal", viz)
 
     # Add the satellite data to vizard
     viz.scData.push_back(sc_data)
     viz.scData.push_back(koz1_sc_data)
-    viz.scData.push_back(koz2_sc_data)
+    #viz.scData.push_back(koz2_sc_data)
+    viz.scData.push_back(target_x_sc_data)
+    viz.scData.push_back(target_y_sc_data)
+    viz.scData.push_back(target_z_sc_data)
 
     # Vizard settings
     settings: vizInterface.VizSettings = viz.settings
@@ -557,7 +596,6 @@ def plot_actual_attitude(simulation_data: dict):
     ax9.legend()
     ax9.grid()
     
-   
     plt.tight_layout()
     plt.show()
 
@@ -778,7 +816,6 @@ if __name__ == "__main__":
     viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
     save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
     plot_actual_attitude(simulation_data)
-
     #plot_for_report(simulation_data, time_end=300)
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
