@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
 import datetime
+import visualtorch
+import torch as th
 from pathlib import Path
 from Basilisk.utilities import SimulationBaseClass, macros, vizSupport
 from Basilisk.simulation import spacecraft, vizInterface, simpleInstrument
@@ -787,6 +789,59 @@ def plot_for_report(simulation_data: dict, time_end=300):
     plt.show()
     
     return
+
+
+def visualize_net_arch(model, env):
+    policy = model.policy
+    observation_space = getattr(env, "observation_space", None)
+
+    if observation_space is None:
+        raise ValueError("Could not infer observation space from env or model.")
+
+    obs_keys = list(observation_space.spaces.keys())
+    input_shape = tuple(
+        (1, *observation_space.spaces[key].shape)
+        for key in obs_keys
+    )
+
+    class PolicyObservationAdapter(th.nn.Module):
+        def __init__(self, policy, obs_keys):
+            super().__init__()
+            self.actor = policy.actor
+            self.obs_keys = obs_keys
+
+        def forward(self, *obs_parts):
+            observations = dict(zip(self.obs_keys, obs_parts))
+            sat_obs = observations["satellite"]
+            zones_obs = observations["zones"]
+
+            # Ensure the LSTM path is included in the rendered graph.
+            if "zones_mask" in observations:
+                zones_mask = th.ones_like(observations["zones_mask"])
+                zones_obs = zones_obs * zones_mask.unsqueeze(-1)
+
+            features_extractor = self.actor.features_extractor
+            _, (hidden_state_out, _) = features_extractor.lstm(zones_obs)
+            features = th.cat([sat_obs, hidden_state_out[-1]], dim=1)
+
+            latent_pi = self.actor.latent_pi(features)
+            mean_actions = self.actor.mu(latent_pi)
+
+            log_std = self.actor.log_std(latent_pi)
+            return th.cat([mean_actions, log_std], dim=1)
+        
+    op = visualtorch.GraphStyleOptions()
+
+    print(policy)
+        
+    img = visualtorch.render(
+        PolicyObservationAdapter(policy, obs_keys),
+        input_shape=input_shape,
+        style="graph",
+        show_dimension=True,
+        show_arrows=True
+    )
+    img.save("net_arch_test.png")
     
 
 ### MAIN ###
@@ -815,7 +870,8 @@ if __name__ == "__main__":
     #visualize_episode_basilisk(simulation_data, show_basilisk_viz=Config.Visualization.SHOW_BASILISK_VIZ)
     viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
     save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
-    plot_actual_attitude(simulation_data)
+    #plot_actual_attitude(simulation_data)
+    visualize_net_arch(model, eval_env)
     #plot_for_report(simulation_data, time_end=300)
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
