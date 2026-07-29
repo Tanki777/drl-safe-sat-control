@@ -292,7 +292,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
 
     r_total = 0
-    USE_REWARD = "mod37"
+    USE_REWARD = "mod22"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -480,7 +480,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Reward for reducing attitude error
         r1 = 0 
         # Phase 1
-        if phase == 1:
+        if phase == "phase 1":
             if err_phi_delta >= 0:
                 r1 = err_phi_delta
                 if err_phi_current > 0.25:
@@ -510,14 +510,14 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
 
         # Bonus for high accuracy
         r2 = 0.0
-        if phase == 1:
+        if phase == "phase 1":
             # Bonus for desired accuracy
             if err_phi_current < 0.2:
                 r2 = 0.02
             elif err_phi_current < 0.25:
                 r2 = 0.02 * (((0.25-err_phi_current)/0.1) + 0.5)
             
-        elif phase == 2:
+        elif phase == "phase 2":
             # No accuracy bonus if violated KOZ
             if koz_violation_cnt > 0:
                 r2 = 0.0
@@ -533,7 +533,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
 
         # Penalty for entering / being close to keep out zone
         r5 = 0.0
-        if phase == 2:
+        if phase == "phase 2":
             # Maximum penalty inside of KOZ
             if margin_koz <= 0.0:
                 r5 = -1.0
@@ -1526,6 +1526,76 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
 
         r_total = r1 + r2 + r4 + r5
 
+    if USE_REWARD == "mod38":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: take a step back, see what causes pointing accuracy to become worse. Less KOZ penalty
+        """
+
+        # Reward for reducing attitude error
+        r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.2:
+            r2 = 0.2
+        elif err_phi_current < 0.25:
+            r2 = 0.2 * ((0.25-err_phi_current)/0.05)
+        # Penalty if farther away
+        else:
+            r2 = -0.01
+
+
+        # Penalty for using large torques
+        r4 = - 0.01*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == 2:
+            # Maximum penalty inside of KOZ
+            if margin_koz <= 0.0:
+                r5 = -0.01
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif margin_koz < 0.17:
+                r5 = -0.01*math.exp(-60.0*margin_koz)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod39":
+        """
+        Goal: recover pointing accuracy in phase 2.
+        Result: 
+        Note: see if obs change from (0,0,0,0) in ph1 to (a,b,c,d) in ph2 is causing issues regardless of reward shape.
+        """
+
+        # Reward for reducing attitude error
+        r1 = err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.2:
+            r2 = 0.02
+        elif err_phi_current < 0.25:
+            r2 = 0.02 * ((0.25-err_phi_current)/0.05)
+        # Penalty if farther away
+        else:
+            r2 = -0.01
+
+
+        # Penalty for using large torques
+        r4 = -1*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+
+        r_total = r1 + r2 + r4 + r5
+
     return r_total
 
 
@@ -1536,7 +1606,7 @@ class BasiliskRWEnv(gym.Env):
         "render_fps": 30,
     }
 
-    def __init__(self, render_mode=None, initial_state=None):
+    def __init__(self, render_mode=None, initial_state=None, phase_type=None):
         super(BasiliskRWEnv).__init__()
 
         self.episode_count = 0
@@ -1606,12 +1676,10 @@ class BasiliskRWEnv(gym.Env):
             self.min_nr_koz = initial_state[7]
             self.max_nr_koz = initial_state[8]
 
-        if self.max_half_angle_koz > 0.0:
-            self.PHASE = 2
-        else:
-            self.PHASE = 1
+        self.PHASE = phase_type
 
-        self.current_nr_koz = np.random.randint(self.min_nr_koz, self.max_nr_koz+1) # Excludes upper bound
+        self.normal_vector_koz = None
+        self.half_angle_koz = None
 
         # Custom metrics tracking for TensorBoard
         self.initial_error_angle = 0.0
@@ -1807,13 +1875,21 @@ class BasiliskRWEnv(gym.Env):
 
         wheel_velocities_initial = np.zeros(3, dtype=np.float64)
 
-        # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
-        self.normal_vector_koz, self.half_angle_koz = self._generate_keep_out_zone(q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
+        # Sampled initial attitude error angle in degree
+        initial_error_angle = 2 * math.acos(min(max(abs(q_array_initial[0]), 0.0), 1.0)) * 180 / np.pi  # degrees
 
-        self.current_nr_koz = np.random.randint(self.min_nr_koz, self.max_nr_koz+1) # Excludes upper bound
-        
-        # Calculate margin angle to keep out zone
-        margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
+        # Temporary hard coding: only generate KOZ when initial attitude error is at least 90 deg
+        if initial_error_angle >= 90.0:
+            self.current_nr_koz = np.random.randint(self.min_nr_koz, self.max_nr_koz+1) # Excludes upper bound
+        else:
+            self.current_nr_koz = 0
+
+        if self.current_nr_koz > 0:
+            # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
+            self.normal_vector_koz, self.half_angle_koz = self._generate_keep_out_zone(q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
+            
+            # Calculate margin angle to keep out zone
+            margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
 
         sat_state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
         koz_state = self._get_koz_state(q_array_initial)
@@ -1827,7 +1903,7 @@ class BasiliskRWEnv(gym.Env):
         self.torque_prev = np.zeros(3, dtype=np.float64)
 
         # Initialize custom metrics for this episode
-        self.initial_error_angle = 2 * math.acos(min(max(abs(q_array_initial[0]), 0.0), 1.0)) * 180 / np.pi  # degrees
+        self.initial_error_angle = initial_error_angle
         self.initial_angular_velocity_mag = np.linalg.norm(omega_initial) * 180 / np.pi  # deg/s
         self.episode_torques = []
         self.episode_torques_prev = []
@@ -1836,13 +1912,14 @@ class BasiliskRWEnv(gym.Env):
         self.min_margin_koz = np.pi
         self.entered_koz_count = 0
 
-        # Update min margin koz angle
-        if margin_koz < self.min_margin_koz:
-            self.min_margin_koz = margin_koz
+        if self.current_nr_koz > 0:
+            # Update min margin koz angle
+            if margin_koz < self.min_margin_koz:
+                self.min_margin_koz = margin_koz
 
-        # Update entered koz count
-        if margin_koz < 0.0:
-            self.entered_koz_count += 1
+            # Update entered koz count
+            if margin_koz < 0.0:
+                self.entered_koz_count += 1
 
         # Copy state into observation
         obs = copy.deepcopy(self.state)
