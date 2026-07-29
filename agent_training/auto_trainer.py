@@ -195,6 +195,7 @@ def do_scheduled_training(model_name, schedule, continue_training):
             continue_training = True
 
         phase_name = phase.get("phase_name", "")
+        phase_type = phase.get("phase_type", "")
         timesteps = phase.get("timesteps", 0)
         initial_state = [
             phase.get("min_initial_error_angle", 0.0),
@@ -209,7 +210,7 @@ def do_scheduled_training(model_name, schedule, continue_training):
         ]
 
         # Create the training environment
-        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name)
+        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name, phase_type=phase_type)
 
         # Create or load the model based on CONTINUE_TRAINING
         model, save_path, latest_model_path = create_or_load_model(continue_training, model_name, env)
