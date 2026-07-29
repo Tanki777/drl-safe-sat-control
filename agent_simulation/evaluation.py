@@ -67,17 +67,18 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(initial_state, model_name, timestep):
+def create_evaluation_env(phase_type, initial_state, model_name, timestep):
     """
     Create the evaluation environment.
     Args:
+        phase_type: String phase type, e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
     Returns:
         eval_env: The created evaluation environment.
     """
     vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
 
-    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)])
+    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)])
     eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
     eval_env.training = False  # Set to evaluation mode (no normalization updates)
     eval_env.norm_reward = False  # Do not normalize rewards during evaluation
@@ -186,13 +187,14 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     return simulation_data
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, worker_id: int):
+def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int):
     """
     Worker function to evaluate agent for a subset of episodes.
     This function will be run in parallel by multiple processes.
     Args:
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
+        phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Number of episodes to run.
@@ -204,7 +206,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     model = load_agent(model_name, timestep)
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(initial_state, model_name, timestep)
+    eval_env = create_evaluation_env(phase_type, initial_state, model_name, timestep)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -254,12 +256,13 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
+def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
     """
     Simulate the agent in parallel using multiple processes and saves the data at the end.
     Args:
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
+        phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Total number of episodes to run.
@@ -287,7 +290,7 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_step
         for worker_id in range(num_workers):
             result = pool.apply_async(
                 evaluate_agent_worker,
-                args=(model_name, timestep, initial_state, max_steps, episode_counts[worker_id], worker_id)
+                args=(model_name, timestep, phase_type, initial_state, max_steps, episode_counts[worker_id], worker_id)
             )
             results.append(result)
         
@@ -455,7 +458,7 @@ def load_evaluation_data(file_name: str):
             #print(i,end=",")
             pass
 
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 30.0:
+        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.25:
             #print(i,end=",")
             pass
         
@@ -529,6 +532,8 @@ if __name__ == "__main__":
         Config.Evaluation.MAX_NR_KOZ,
     ]
 
+    PHASE_TYPE = Config.Evaluation.PHASE_TYPE
+
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
     #loaded = load_evaluation_data("test_lstm_ph1_1_2900000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[1000]_2026-06-28-10-28-42.npz")
@@ -537,7 +542,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
     t_end = time.time()
 
     print()
