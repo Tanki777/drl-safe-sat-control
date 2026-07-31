@@ -119,7 +119,7 @@ def create_model_metadata(model_name, schedule, model):
         "use sde": model.use_sde,
         "sde sample freq": model.sde_sample_freq,
         "use sde at warmup": model.use_sde_at_warmup,
-        "policy kwargs": model.policy_kwargs,
+        "policy kwargs": model.policy_kwargs.__class__.__name__ if model.policy_kwargs is not None else None,
         "seed": model.seed,
         "device": model.device.type if model.device is not None else None
     }
@@ -195,6 +195,7 @@ def do_scheduled_training(model_name, schedule, continue_training):
             continue_training = True
 
         phase_name = phase.get("phase_name", "")
+        phase_type = phase.get("phase_type", "")
         timesteps = phase.get("timesteps", 0)
         initial_state = [
             phase.get("min_initial_error_angle", 0.0),
@@ -203,11 +204,13 @@ def do_scheduled_training(model_name, schedule, continue_training):
             phase.get("max_initial_angular_velocity", 0.1),
             phase.get("max_steps", 500),
             phase.get("min_half_angle_koz", 0.0),
-            phase.get("max_half_angle_koz", 0.0)
+            phase.get("max_half_angle_koz", 0.0),
+            phase.get("min_nr_koz", 0),
+            phase.get("max_nr_koz", 0)
         ]
 
         # Create the training environment
-        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name)
+        env = trainer.create_environment(model_name, initial_state=initial_state, phase_name=phase_name, phase_type=phase_type)
 
         # Create or load the model based on CONTINUE_TRAINING
         model, save_path, latest_model_path = create_or_load_model(continue_training, model_name, env)

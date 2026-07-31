@@ -28,6 +28,7 @@ class Config():
     class Evaluation():
         MODEL_NAME = config_data["evaluation"]["MODEL_NAME"]
         TIMESTEP = config_data["evaluation"]["TIMESTEP"]
+        PHASE_TYPE = config_data["evaluation"]["PHASE_TYPE"]
         MAX_STEPS = config_data["evaluation"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MAX_INITIAL_ERROR_ANGLE"]
@@ -35,10 +36,13 @@ class Config():
         MAX_INITIAL_ANGULAR_VELOCITY = config_data["evaluation"]["MAX_INITIAL_ANGULAR_VELOCITY"]
         MIN_HALF_ANGLE_KOZ = config_data["evaluation"]["MIN_HALF_ANGLE_KOZ"]
         MAX_HALF_ANGLE_KOZ = config_data["evaluation"]["MAX_HALF_ANGLE_KOZ"]
+        MIN_NR_KOZ = config_data["evaluation"]["MIN_NR_KOZ"]
+        MAX_NR_KOZ = config_data["evaluation"]["MAX_NR_KOZ"]
 
     class Visualization():
         MODEL_NAME = config_data["visualization"]["MODEL_NAME"]
         TIMESTEP = config_data["visualization"]["TIMESTEP"]
+        PHASE_TYPE = config_data["visualization"]["PHASE_TYPE"]
         MAX_STEPS = config_data["visualization"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["visualization"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["visualization"]["MAX_INITIAL_ERROR_ANGLE"]
@@ -46,7 +50,11 @@ class Config():
         MAX_INITIAL_ANGULAR_VELOCITY = config_data["visualization"]["MAX_INITIAL_ANGULAR_VELOCITY"]
         MIN_HALF_ANGLE_KOZ = config_data["visualization"]["MIN_HALF_ANGLE_KOZ"]
         MAX_HALF_ANGLE_KOZ = config_data["visualization"]["MAX_HALF_ANGLE_KOZ"]
+        MIN_NR_KOZ = config_data["visualization"]["MIN_NR_KOZ"]
+        MAX_NR_KOZ = config_data["visualization"]["MAX_NR_KOZ"]
         CREATE_VIDEO = config_data["visualization"]["CREATE_VIDEO"]
+        SHOW_BASILISK_VIZ = config_data["visualization"]["SHOW_BASILISK_VIZ"]
+        VIZARD_EXE_PATH = config_data["visualization"]["VIZARD_EXE_PATH"]
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]

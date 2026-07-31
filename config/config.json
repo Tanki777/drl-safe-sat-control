@@ -4,34 +4,42 @@
     },
 
     "training": {
-        "MODEL_NAME": "rewPrak_envBsk_3_seed1000_step1k_sched_180",
-        "SCHEDULE_FILE_NAME": "sched_180.json",
-        "CONTINUE_TRAINING": false
+        "MODEL_NAME": "rewMod22_ph1_schedPh1v3_cont",
+        "SCHEDULE_FILE_NAME": "ph1v3.json",
+        "CONTINUE_TRAINING": true
     },
 
     "evaluation": {
-        "MODEL_NAME": "rewYang_sched_180",
-        "TIMESTEP": 1200000,
+        "MODEL_NAME": "rewMod22_ph1_schedPh1v2",
+        "PHASE_TYPE": "phase 1",
+        "TIMESTEP": 3500000,
         "MAX_STEPS": 3000,
-        "MIN_INITIAL_ERROR_ANGLE": 0.0,
+        "MIN_INITIAL_ERROR_ANGLE": 90.0,
         "MAX_INITIAL_ERROR_ANGLE": 180.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 0.0,
-        "MAX_HALF_ANGLE_KOZ": 0.0
+        "MIN_HALF_ANGLE_KOZ": 15.0,
+        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_NR_KOZ": 1,
+        "MAX_NR_KOZ": 1
     },
 
     "visualization": {
-        "MODEL_NAME": "rewPrak_envBsk_3_sched_180",
-        "TIMESTEP": 5700000,
+        "MODEL_NAME": "rewMod22_ph1_schedPh1v2",
+        "TIMESTEP": 3500000,
+        "PHASE_TYPE": "phase 1",
         "MAX_STEPS": 3000,
-        "MIN_INITIAL_ERROR_ANGLE": 0.0,
+        "MIN_INITIAL_ERROR_ANGLE": 90.0,
         "MAX_INITIAL_ERROR_ANGLE": 180.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 0.0,
-        "MAX_HALF_ANGLE_KOZ": 0.0,
-        "CREATE_VIDEO": false
+        "MIN_HALF_ANGLE_KOZ": 15.0,
+        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_NR_KOZ": 0,
+        "MAX_NR_KOZ": 0,
+        "CREATE_VIDEO": false,
+        "SHOW_BASILISK_VIZ": false,
+        "VIZARD_EXE_PATH": "C:\\Program Files (x86)\\Vizard\\Vizard.exe"
     },
 
     "env_simulator": {

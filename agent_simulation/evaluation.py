@@ -18,9 +18,14 @@ if _drl_repo_dir not in sys.path:
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
+from agent_training import environment as sat_env
 from agent_training.constants import Constants
-from agent_training.environment import BasiliskRWEnv, scale_torque
+from agent_training.environment import BasiliskRWEnv, scale_torque, rotate_vector_by_quaternion_to_body_frame, LSTM
 from config.config import Config
+
+# Backward compatibility for models saved when trainer.py imported LSTM via
+# `from environment import LSTM`. Cloudpickle stores that module path.
+sys.modules.setdefault("environment", sat_env)
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
@@ -62,17 +67,18 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(initial_state, model_name, timestep):
+def create_evaluation_env(phase_type, initial_state, model_name, timestep):
     """
     Create the evaluation environment.
     Args:
+        phase_type: String phase type, e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
     Returns:
         eval_env: The created evaluation environment.
     """
     vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
 
-    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)])
+    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)])
     eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
     eval_env.training = False  # Set to evaluation mode (no normalization updates)
     eval_env.norm_reward = False  # Do not normalize rewards during evaluation
@@ -95,6 +101,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     # Arrays for storing data
     times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
     states = []
+    states_koz = []
+    lstm_output = []
     torques = []
     rewards = []
     frames = []
@@ -105,6 +113,12 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
     min_margin_koz = 0
     cnt_Koz_violations = 0
+    zones_mask = eval_env.get_original_obs()["zones_mask"][0]
+
+    # Get LSTM
+    policy = getattr(model, "policy") 
+    actor = getattr(policy, "actor")
+    features_extractor_actor: LSTM = getattr(actor, "features_extractor")
 
     # Simulation loop
     while not done:
@@ -113,12 +127,12 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
 
         action, _states = model.predict(obs, deterministic=True)
-        states.append(eval_env.get_original_obs()[0])
+        states.append(eval_env.get_original_obs()["satellite"][0])
+        states_koz.append(eval_env.get_original_obs()["zones"][0])
+        lstm_output.append(features_extractor_actor.lstm_out.tolist())
 
         # Step the environment
         obs, reward, done, info = eval_env.step(action)
-
-        #print(done)
 
         torques.append(action[0].copy())
         rewards.append(reward[0])
@@ -140,6 +154,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     # Extract the solution for attitude (in terms of quaternion) and angular velocity
     states_array = np.array(states)
+    states_koz_array = np.array(states_koz)
+    lstm_output_array = np.array(lstm_output)
     torques_array = np.array(torques) * scale_torque
     rewards_array = np.array(rewards)
 
@@ -160,21 +176,25 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         "times": times,
         "normal_vector_koz": normal_vector_koz,
         "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": states_array[:, 10]*180/np.pi,
+        "margin_angles_koz": states_koz_array[:, :, 0] * 180 / np.pi, # TODO: support multiple KOZs
+        "direction_koz": states_koz_array[:, :, 1:4],
         "min_margin_koz": min_margin_koz,
-        "cnt_Koz_violations": cnt_Koz_violations
+        "cnt_Koz_violations": cnt_Koz_violations,
+        "lstm_output": lstm_output_array,
+        "zones_mask": zones_mask
         }
     
     return simulation_data
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, worker_id: int):
+def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int):
     """
     Worker function to evaluate agent for a subset of episodes.
     This function will be run in parallel by multiple processes.
     Args:
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
+        phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Number of episodes to run.
@@ -186,7 +206,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     model = load_agent(model_name, timestep)
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(initial_state, model_name, timestep)
+    eval_env = create_evaluation_env(phase_type, initial_state, model_name, timestep)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -236,12 +256,13 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
+def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
     """
     Simulate the agent in parallel using multiple processes and saves the data at the end.
     Args:
         model_name: Name of the model file (without .zip extension).
         timestep: Timestep for evaluation.
+        phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Total number of episodes to run.
@@ -269,7 +290,7 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_step
         for worker_id in range(num_workers):
             result = pool.apply_async(
                 evaluate_agent_worker,
-                args=(model_name, timestep, initial_state, max_steps, episode_counts[worker_id], worker_id)
+                args=(model_name, timestep, phase_type, initial_state, max_steps, episode_counts[worker_id], worker_id)
             )
             results.append(result)
         
@@ -304,19 +325,20 @@ def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_step
     save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_ep[{episodes}]_{time_iso}.npz")
     np.savez(save_path, data=np.array(simulation_data), dtype=object)
 
+    calc_metrics(simulation_data)
     # Print results
-    print()
-    print(f"Violation rate: {koz_violation_episodes/episodes*100}%")
-    print(f"Agent was within KOZ for these amount of steps per episode:")
-    print(f"--- Mean: {np.mean(cnts_koz_violations_array):.2f}, Std: {np.std(cnts_koz_violations_array):.2f}, Min: {np.min(cnts_koz_violations_array)}, Max: {np.max(cnts_koz_violations_array)}")
-    print(f"Minimum margin to KOZ (degrees):")
-    print(f"--- Mean: {np.mean(min_margins_koz_array):.2f}, Std: {np.std(min_margins_koz_array):.2f}, Min: {np.min(min_margins_koz_array):.2f}, Max: {np.max(min_margins_koz_array):.2f}")
-    print(f"Final rotation angle (degrees):")
-    print(f"--- Mean: {np.mean(err_angles_final_array):.2f}, Std: {np.std(err_angles_final_array):.2f}, Min: {np.min(err_angles_final_array):.2f}, Max: {np.max(err_angles_final_array):.2f}")
-    print(f"Final angular velocity (deg/s):")
-    print(f"--- Mean: {np.mean(ang_vels_final_array):.4f}, Std: {np.std(ang_vels_final_array):.4f}, Min: {np.min(ang_vels_final_array):.4f}, Max: {np.max(ang_vels_final_array):.4f}")
-    print(f"Rewards:")
-    print(f"--- Mean: {np.mean(ep_rewards):.2f}, Std: {np.std(ep_rewards):.2f}, Min: {np.min(ep_rewards):.2f}, Max: {np.max(ep_rewards):.2f}")
+    # print()
+    # print(f"Violation rate: {koz_violation_episodes/episodes*100}%")
+    # print(f"Agent was within KOZ for these amount of steps per episode:")
+    # print(f"--- Mean: {np.mean(cnts_koz_violations_array):.2f}, Std: {np.std(cnts_koz_violations_array):.2f}, Min: {np.min(cnts_koz_violations_array)}, Max: {np.max(cnts_koz_violations_array)}")
+    # print(f"Minimum margin to KOZ (degrees):")
+    # print(f"--- Mean: {np.mean(min_margins_koz_array):.2f}, Std: {np.std(min_margins_koz_array):.2f}, Min: {np.min(min_margins_koz_array):.2f}, Max: {np.max(min_margins_koz_array):.2f}")
+    # print(f"Final rotation angle (degrees):")
+    # print(f"--- Mean: {np.mean(err_angles_final_array):.2f}, Std: {np.std(err_angles_final_array):.2f}, Min: {np.min(err_angles_final_array):.2f}, Max: {np.max(err_angles_final_array):.2f}")
+    # print(f"Final angular velocity (deg/s):")
+    # print(f"--- Mean: {np.mean(ang_vels_final_array):.4f}, Std: {np.std(ang_vels_final_array):.4f}, Min: {np.min(ang_vels_final_array):.4f}, Max: {np.max(ang_vels_final_array):.4f}")
+    # print(f"Rewards:")
+    # print(f"--- Mean: {np.mean(ep_rewards):.2f}, Std: {np.std(ep_rewards):.2f}, Min: {np.min(ep_rewards):.2f}, Max: {np.max(ep_rewards):.2f}")
 
 
 def calc_metrics(data: list):
@@ -436,7 +458,7 @@ def load_evaluation_data(file_name: str):
             #print(i,end=",")
             pass
 
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 30.0:
+        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.25:
             #print(i,end=",")
             pass
         
@@ -505,18 +527,22 @@ if __name__ == "__main__":
         Config.Evaluation.MAX_INITIAL_ANGULAR_VELOCITY,
         Config.Evaluation.MAX_STEPS,
         Config.Evaluation.MIN_HALF_ANGLE_KOZ,
-        Config.Evaluation.MAX_HALF_ANGLE_KOZ
+        Config.Evaluation.MAX_HALF_ANGLE_KOZ,
+        Config.Evaluation.MIN_NR_KOZ,
+        Config.Evaluation.MAX_NR_KOZ,
     ]
+
+    PHASE_TYPE = Config.Evaluation.PHASE_TYPE
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
-    #loaded = load_evaluation_data("test_nenv8gs-1_lr1e-4_seed1000_sched_180_3000000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[10000]_2026-05-27-20-52-10.npz")
+    #loaded = load_evaluation_data("test_lstm_ph1_1_2900000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[1000]_2026-06-28-10-28-42.npz")
     #calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
     t_end = time.time()
 
     print()

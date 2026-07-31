@@ -4,7 +4,7 @@ stable_baselines3[extra]
 numba
 tensorboard
 scipy
-imageio
+imageio[ffmpeg]
 bsk
 pytest
 # PyTorch with CUDA support - install separately with:
