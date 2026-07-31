@@ -7,5 +7,6 @@ scipy
 imageio[ffmpeg]
 bsk
 pytest
+viser
 # PyTorch with CUDA support - install separately with:
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
