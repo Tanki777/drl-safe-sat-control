@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import viser
+import viser.transforms as tf
 import numpy as np
 from dataclasses import dataclass
 
@@ -12,6 +13,7 @@ if drl_repo_dir not in sys.path:
 from agent_training.trainer import YELLOW_START, COLOR_END
 from agent_simulation.evaluation import load_evaluation_data
 from agent_training.environment import normalize_vector, rotate_vector_by_quaternion
+from agent_training.constants import Constants
 
 
 # Define custom colors
@@ -24,13 +26,17 @@ class Colors():
     GRAY = (180, 190, 205)
     RED = (255, 0, 0)
 
-
 @dataclass
-class EpisodePlaybackHandles:
-    satellite: viser.FrameHandle
-    boresight_marker: viser.IcosphereHandle
-    trajectory: viser.LineSegmentsHandle
+class CameraTransition:
+    """
+    Active smooth camera transition for one connected client.
+    """
 
+    start_pose: tf.SE3
+    target_pose: tf.SE3
+    start_time: float
+    duration: float
+    final_look_at: np.ndarray
 
 class EpisodePlaybackController:
     """
@@ -54,6 +60,16 @@ class EpisodePlaybackController:
         )
 
         self._last_frame = -1
+
+        # Init camera
+        self.server.initial_camera.position = (1.8, 0.0, 0.0)
+        self.server.initial_camera.look_at = (0.0, 0.0, 0.0)
+        self.camera_transition: CameraTransition = None
+        self.camera_rate = 60.0
+        self.camera_perspective_change_duration = 0.4
+
+        self.client: viser.ClientHandle = None
+        
 
         self._create_dynamic_objects()
         self._create_gui()
@@ -121,6 +137,12 @@ class EpisodePlaybackController:
             # Add checkbox to toggle entire episode trajectory.
             self.gui_show_full_trajectory = self.server.gui.add_checkbox("Show complete trajectory", initial_value=False)
 
+        # Add a GUI folder for camera settings.
+        with self.server.gui.add_folder("Camera"):
+
+            # Add dropdown menu to select camera perspective.
+            self.gui_camera_perspective = self.server.gui.add_dropdown("Perspective", options=("target","boresight"), initial_value="target")
+
         # Add command to play / pause with spacebar.
         self.command_play_pause = self.server.gui.add_command(label="Toggle play/pause", hotkey="space")
 
@@ -161,10 +183,80 @@ class EpisodePlaybackController:
         def _(_) -> None:
             self._update_trajectory(int(self.gui_timestep.value))
 
+        # On updating camera perspective, handle it.
+        @self.gui_camera_perspective.on_update
+        def _(_) -> None:
+            self._handle_camera_perspective_change()
+
         # On triggering play / pause hotkey, toggle play / pause.
         @self.command_play_pause.on_trigger
         def _(_) -> None:
             self.gui_playing.value = not self.gui_playing.value
+
+        # On client connect, save client handle (we only consider single client in this project).
+        @self.server.on_client_connect
+        def _(client: viser.ClientHandle) -> None:
+            self.client = client
+
+    def _handle_camera_perspective_change(self) -> None:
+        """
+        Smoothly switch to the selected camera mode.
+        """
+
+        frame_index = int(
+            self.gui_timestep.value
+        )
+        
+        if (
+            self.gui_camera_perspective.value
+            == "target"
+        ):
+            self._start_target_camera_transition(
+                client=self.client,
+                duration=(
+                    self.camera_perspective_change_duration
+                ),
+            )
+        else:
+            self._start_boresight_camera_transition(
+                client=self.client,
+                frame_index=frame_index,
+                duration=(
+                    self.camera_perspective_change_duration
+                ),
+            )
+
+    def _update_camera_transition(self) -> None:
+        """
+        Advance active camera transition by one visual frame.
+        """
+
+        if not self.camera_transition:
+            return
+
+        now = time.perf_counter()
+
+        alpha = (now - self.camera_transition.start_time) / self.camera_transition.duration
+
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+
+        # Smoothstep easing.
+        eased_alpha = alpha * alpha * (3.0 - 2.0 * alpha)
+
+        relative_transform = self.camera_transition.start_pose.inverse() @ self.camera_transition.target_pose
+
+        interpolated_pose = self.camera_transition.start_pose @ tf.SE3.exp(relative_transform.log() * eased_alpha)
+
+        with self.client.atomic():
+            self.client.camera.wxyz = interpolated_pose.rotation().wxyz
+
+            self.client.camera.position = interpolated_pose.translation()
+
+        if alpha >= 1.0:
+            # Set the final orbit center after the pose transition.
+            self.client.camera.look_at = (self.camera_transition.final_look_at)
+
+        self.camera_transition = None # TODO
 
     def _update_trajectory(self, frame_index: int) -> None:
         """
@@ -197,6 +289,331 @@ class EpisodePlaybackController:
 
         return speed_lookup[self.gui_speed.value]
 
+    def _get_frame_interval(self, frame_index: int) -> float:
+        """
+        Returns the wall clock interval until the next episode frame.
+        """
+
+        frame_interval = Constants.TIME_DELTA / self._get_speed_multiplier()
+
+        return frame_interval
+
+    @staticmethod
+    def _rotation_matrix_to_wxyz(
+        rotation_matrix: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Convert a 3x3 rotation matrix to a normalized quaternion.
+        """
+        matrix = np.asarray(rotation_matrix)
+
+        trace = float(np.trace(matrix))
+
+        if trace > 0.0:
+            scale = np.sqrt(trace + 1.0) * 2.0
+
+            w = 0.25 * scale
+            x = (matrix[2, 1] - matrix[1, 2]) / scale
+            y = (matrix[0, 2] - matrix[2, 0]) / scale
+            z = (matrix[1, 0] - matrix[0, 1]) / scale
+
+        elif (matrix[0, 0] > matrix[1, 1] and matrix[0, 0] > matrix[2, 2]):
+            scale = np.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2]) * 2.0
+
+            w = (matrix[2, 1] - matrix[1, 2]) / scale
+            x = 0.25 * scale
+            y = (matrix[0, 1] + matrix[1, 0]) / scale
+            z = (matrix[0, 2] + matrix[2, 0]) / scale
+
+        elif matrix[1, 1] > matrix[2, 2]:
+            scale = np.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2]) * 2.0
+
+            w = (matrix[0, 2] - matrix[2, 0]) / scale
+            x = (matrix[0, 1] + matrix[1, 0]) / scale
+            y = 0.25 * scale
+            z = (matrix[1, 2] + matrix[2, 1]) / scale
+
+        else:
+            scale = np.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1]) * 2.0
+
+            w = (matrix[1, 0] - matrix[0, 1]) / scale
+            x = (matrix[0, 2] + matrix[2, 0]) / scale
+            y = (matrix[1, 2] + matrix[2, 1]) / scale
+            z = 0.25 * scale
+
+        quaternion = np.array([w, x, y, z])
+
+        quaternion /= np.linalg.norm(quaternion)
+
+        return quaternion
+
+    def _make_camera_pose_looking_at(
+        self,
+        position: np.ndarray,
+        look_at: np.ndarray,
+        preferred_up: np.ndarray,
+    ) -> tf.SE3:
+        """
+        Construct a camera SE(3) pose that looks at a world point.
+
+        The rotation columns contain the camera-local axes expressed in
+        the world frame.
+
+        Viser camera pose conventions use P_world = [R | t] P_camera.
+        """
+        position = np.asarray(
+            position,
+            dtype=np.float64,
+        )
+        look_at = np.asarray(
+            look_at,
+            dtype=np.float64,
+        )
+        preferred_up = np.asarray(
+            preferred_up,
+            dtype=np.float64,
+        )
+
+        # Direction from the camera towards the viewed point.
+        forward = look_at - position
+        forward_norm = np.linalg.norm(forward)
+
+        if forward_norm < 1e-12:
+            raise ValueError(
+                "Camera position and look-at point "
+                "must differ."
+            )
+
+        forward /= forward_norm
+
+        preferred_up /= np.linalg.norm(
+            preferred_up
+        )
+
+        # Avoid a bad cross product near the preferred up axis.
+        if abs(
+            np.dot(forward, preferred_up)
+        ) > 0.95:
+            preferred_up = np.array(
+                [0.0, 1.0, 0.0],
+                dtype=np.float64,
+            )
+
+            if abs(
+                np.dot(forward, preferred_up)
+            ) > 0.95:
+                preferred_up = np.array(
+                    [1.0, 0.0, 0.0],
+                    dtype=np.float64,
+                )
+
+        right = np.cross(
+            preferred_up,
+            forward,
+        )
+        right /= np.linalg.norm(right)
+
+        up = np.cross(
+            forward,
+            right,
+        )
+        up /= np.linalg.norm(up)
+
+        rotation_matrix = np.column_stack(
+            (
+                right,
+                up,
+                forward,
+            )
+        )
+
+        wxyz = self._rotation_matrix_to_wxyz(
+            rotation_matrix
+        )
+
+        return tf.SE3.from_rotation_and_translation(
+            tf.SO3(wxyz),
+            position,
+        )
+
+    def _get_target_camera_pose(
+        self,
+    ) -> tuple[tf.SE3, np.ndarray]:
+        """
+        Returns the static target perspective camera pose.
+        """
+        position = np.array(
+            [1.8, 0.0, 0.0],
+            dtype=np.float64,
+        )
+
+        look_at = np.array(
+            [0.0, 0.0, 0.0],
+            dtype=np.float64,
+        )
+
+        pose = self._make_camera_pose_looking_at(
+            position=position,
+            look_at=look_at,
+            preferred_up=np.array(
+                [0.0, 0.0, 1.0]
+            ),
+        )
+
+        return pose, look_at
+
+    def _get_boresight_camera_pose(
+        self,
+        frame_index: int,
+    ) -> tuple[tf.SE3, np.ndarray]:
+        """
+        Gets a camera pose above the current boresight tip.
+
+        The camera is radially outside the sphere and looks down at the
+        boresight point on the sphere.
+        """
+        boresight_tip = np.asarray(
+            self.trajectory_points[frame_index],
+            dtype=np.float64,
+        )
+        boresight_tip /= np.linalg.norm(
+            boresight_tip
+        )
+
+        camera_position = (
+            1.0
+            + 0.8
+        ) * boresight_tip
+
+        look_at = boresight_tip
+
+        pose = self._make_camera_pose_looking_at(
+            position=camera_position,
+            look_at=look_at,
+            preferred_up=np.array(
+                [0.0, 0.0, 1.0]
+            ),
+        )
+
+        return pose, look_at
+
+    @staticmethod
+    def _get_current_camera_pose(
+        client: viser.ClientHandle,
+    ) -> tf.SE3:
+        return tf.SE3.from_rotation_and_translation(
+            tf.SO3(
+                np.asarray(
+                    client.camera.wxyz,
+                    dtype=np.float64,
+                )
+            ),
+            np.asarray(
+                client.camera.position,
+                dtype=np.float64,
+            ),
+        )
+
+    def _set_camera_immediately(
+        self,
+        client: viser.ClientHandle,
+        target_pose: tf.SE3,
+        target_look_at: np.ndarray,
+    ) -> None:
+        """
+        Immediately apply one camera pose.
+        """
+        with client.atomic():
+            client.camera.wxyz = (
+                target_pose.rotation().wxyz
+            )
+            client.camera.position = (
+                target_pose.translation()
+            )
+
+        # Position changes move look_at with them, so assign look_at
+        # afterwards when a fixed orbit center is required.
+        client.camera.look_at = target_look_at
+        client.flush()
+
+    def _start_camera_transition(
+        self,
+        client: viser.ClientHandle,
+        target_pose: tf.SE3,
+        target_look_at: np.ndarray,
+        duration: float,
+    ) -> None:
+        """
+        Begin or replace a non-blocking camera transition.
+
+        Starting from the client's current interpolated pose prevents
+        transition commands from accumulating.
+        """
+        if duration <= 0.0:
+            self.camera_transition = None
+
+            self._set_camera_immediately(
+                client=client,
+                target_pose=target_pose,
+                target_look_at=target_look_at,
+            )
+            return
+
+        current_pose = (
+            self._get_current_camera_pose(
+                client
+            )
+        )
+
+        self.camera_transition = CameraTransition(
+            start_pose=current_pose,
+            target_pose=target_pose,
+            start_time=time.perf_counter(),
+            duration=max(
+                float(duration),
+                1.0 / self.camera_rate,
+            ),
+            final_look_at=np.asarray(
+                target_look_at,
+                dtype=np.float64,
+            ),
+        )
+
+    def _start_target_camera_transition(
+        self,
+        client: viser.ClientHandle,
+        duration: float,
+    ) -> None:
+        target_pose, target_look_at = (
+            self._get_target_camera_pose()
+        )
+
+        self._start_camera_transition(
+            client=client,
+            target_pose=target_pose,
+            target_look_at=target_look_at,
+            duration=duration,
+        )
+
+    def _start_boresight_camera_transition(
+        self,
+        client: viser.ClientHandle,
+        frame_index: int,
+        duration: float,
+    ) -> None:
+        target_pose, target_look_at = (
+            self._get_boresight_camera_pose(
+                frame_index
+            )
+        )
+
+        self._start_camera_transition(
+            client=client,
+            target_pose=target_pose,
+            target_look_at=target_look_at,
+            duration=duration,
+        )
+
     def set_frame(self, frame_index: int) -> None:
         """
         Sets a specific frame number.
@@ -218,6 +635,12 @@ class EpisodePlaybackController:
             self.gui_frame_number.value = frame_index
             self.gui_time.value = float(self.times[frame_index])
 
+        # Camera is client-specific and smoothly follows the newest
+        # boresight target.
+        if self.gui_camera_perspective.value == "boresight":
+            transition_duration = self._get_frame_interval(frame_index)
+            self._start_boresight_camera_transition(self.client, frame_index, transition_duration)
+
         self._last_frame = frame_index
 
     def run(self) -> None:
@@ -226,12 +649,18 @@ class EpisodePlaybackController:
         """
 
         last_update_time = time.perf_counter()
+        last_camera_update_time = last_update_time
         accumulated_frames = 0.0
 
         while True:
             current_time = time.perf_counter()
             elapsed = current_time - last_update_time
             last_update_time = current_time
+            
+            # Camera transitions update independently from episode frames.
+            if (current_time - last_camera_update_time >= 1.0 / self.camera_rate):
+                self._update_camera_transition()
+                last_camera_update_time = current_time
 
             if self.gui_playing.value:
                 effective_fps = 10 * self._get_speed_multiplier()
