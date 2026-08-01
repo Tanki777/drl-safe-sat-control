@@ -50,7 +50,7 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
         name="/satellite/axes/boresight_x",
         points=np.asarray([[[0.0, 0.0, 0.0], [axis_length, 0.0, 0.0]]]),
         colors=(255, 170, 0),
-        line_width=8.0,
+        line_width=8.0
     )
 
     # Body y axis
@@ -58,7 +58,7 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
         name="/satellite/axes/body_y",
         points=np.asarray([[[0.0, 0.0, 0.0], [0.0, axis_length, 0.0]]]),
         colors=(0, 190, 80),
-        line_width=4.0,
+        line_width=4.0
     )
 
     # Body z axis
@@ -66,14 +66,14 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
         name="/satellite/axes/body_z",
         points=np.asarray([[[0.0, 0.0, 0.0], [0.0, 0.0, axis_length]]]),
         colors=(60, 120, 255),
-        line_width=4.0,
+        line_width=4.0
     )
 
     # Boresight label
     # server.scene.add_label(
     #     name="/satellite/axes/boresight_label",
     #     text="Boresight",
-    #     position=(axis_length, 0.0, 0.0),
+    #     position=(axis_length, 0.0, 0.0)
     # )
 
     return satellite_frame
@@ -96,7 +96,7 @@ def add_unit_sphere(server: viser.ViserServer):
         flat_shading=False,
         side="double",
         cast_shadow=False,
-        receive_shadow=False,
+        receive_shadow=False
     )
 
 
@@ -175,7 +175,7 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
             (
                 0,
                 first_ring_start + segment_index,
-                first_ring_start + next_segment,
+                first_ring_start + next_segment
             )
         )
 
@@ -196,14 +196,14 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
                 (
                     inner_current,
                     outer_current,
-                    outer_next,
+                    outer_next
                 )
             )
             faces.append(
                 (
                     inner_current,
                     outer_next,
-                    inner_next,
+                    inner_next
                 )
             )
 
@@ -248,7 +248,7 @@ def add_koz(server: viser.ViserServer, name: str, normal_vector: np.ndarray, hal
         flat_shading=False,
         side="double",
         cast_shadow=False,
-        receive_shadow=False,
+        receive_shadow=False
     )
 
     # add_line_segments expects shape (N, 2, 3).
@@ -259,10 +259,54 @@ def add_koz(server: viser.ViserServer, name: str, normal_vector: np.ndarray, hal
         name=f"/koz/{name}/border",
         points=border_segments,
         colors=color,
-        line_width=1.0,
+        line_width=1.0
     )
 
     return koz_handle, border_handle
+
+
+def add_target(server: viser.ViserServer):
+    """
+    Adds the target.
+
+    Args:
+        server: Viser server to add objects to scene.
+    """
+
+    segments_angular = 96
+    radius = 0.02
+    normal_vector = np.array((1.0, 0.0, 0.0))
+
+    basis_u, basis_v = create_orthonormal_basis(normal_vector)
+
+    phi = np.linspace(
+        0.0,
+        2.0 * np.pi,
+        segments_angular,
+        endpoint=False
+    )
+
+    tangent_directions = (
+        np.cos(phi)[:, None] * basis_u[None, :]
+        + np.sin(phi)[:, None] * basis_v[None, :]
+    )
+
+    points = (
+        np.cos(radius) * normal_vector[None, :]
+        + np.sin(radius) * tangent_directions
+    )
+
+    # Close the circle.
+    points = np.vstack((points, points[0]))
+
+    points_stacked = np.stack((points[:-1], points[1:]), axis=1)
+
+    boundary_handle = server.scene.add_line_segments(
+        name="/target/boundary",
+        points=points_stacked,
+        colors=(194, 168, 0),
+        line_width=1.0
+    )
 
 
 def start_server():
@@ -277,7 +321,9 @@ def start_server():
     sat_frame = add_satellite(server, episode_data["quaternion"][0])
     
     add_koz(server, "KOZ 1", episode_data["normal_vector_koz"], episode_data["half_angle_koz"], (255, 0, 0))
+    add_target(server)
     add_unit_sphere(server)
+
 
     print("|-----Access Viser at: http://localhost:8080")
     print("|-----Press Ctrl+C to stop the server")
