@@ -953,7 +953,10 @@ def start_server():
     # Load episode data
     episodes = load_evaluation_data("rewMod22_phFull_3_ph2_schedStage22_3800000_[150.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[1000]_2026-07-21-22-10-16.npz")
     episode_data = episodes[0] # First episode
-    
+
+    # Init theme
+    server.gui.configure_theme(show_logo=False, dark_mode=True)
+        
     add_koz(server, "KOZ 1", episode_data["normal_vector_koz"], episode_data["half_angle_koz"], Colors.RED)
     add_target(server)
     #add_unit_sphere(server)
