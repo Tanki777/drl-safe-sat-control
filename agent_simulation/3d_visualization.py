@@ -5,6 +5,7 @@ import viser
 import viser.transforms as tf
 import numpy as np
 from dataclasses import dataclass
+from pathlib import Path
 
 drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if drl_repo_dir not in sys.path:
@@ -28,6 +29,7 @@ class Colors():
     GOLD = (194, 168, 0)
     GRAY = (180, 190, 205)
     RED = (255, 0, 0)
+    DARK_BLUE = (0, 0, 100)
 
 
 @dataclass
@@ -85,7 +87,7 @@ class EpisodePlaybackController:
         self._last_frame = -1
 
         # Init camera
-        self.server.initial_camera.position = (1.8, 0.0, 0.0)
+        self.server.initial_camera.position = (1.6, 0.0, 0.0)
         self.server.initial_camera.look_at = (0.0, 0.0, 0.0)
         self.camera_transition: CameraTransition = None
         self.camera_rate = 60.0
@@ -378,7 +380,6 @@ class EpisodePlaybackController:
     def _make_camera_pose_looking_at(self, position: np.ndarray, look_at: np.ndarray, preferred_up: np.ndarray) -> tf.SE3:
         """
         Constructs a camera SE(3) pose that looks at a world point.
-
         The rotation columns contain the camera-local axes expressed in
         the world frame.
         """
@@ -422,7 +423,7 @@ class EpisodePlaybackController:
         Returns the static target perspective camera pose.
         """
 
-        position = np.array([1.8, 0.0, 0.0], dtype=np.float64)
+        position = np.array([1.6, 0.0, 0.0], dtype=np.float64)
 
         look_at = np.array([0.0, 0.0, 0.0], dtype=np.float64)
 
@@ -437,7 +438,6 @@ class EpisodePlaybackController:
     def _get_boresight_camera_pose(self, frame_index: int) -> tuple[tf.SE3, np.ndarray]:
         """
         Gets a camera pose above the current boresight vector.
-
         The camera is radially outside the sphere, aligned with the
         boresight vector, and looks towards the origin.
         """
@@ -445,7 +445,7 @@ class EpisodePlaybackController:
         boresight_tip = np.asarray(self.trajectory_points[frame_index], dtype=np.float64)
         boresight_tip /= np.linalg.norm(boresight_tip)
 
-        camera_position = (1.0 + 0.8) * boresight_tip
+        camera_position = (1.0 + 0.6) * boresight_tip
 
         look_at = np.zeros(3, dtype=np.float64)
 
@@ -460,10 +460,10 @@ class EpisodePlaybackController:
     def _precompute_camera_checkpoints(self) -> tuple[CameraCheckpoint, ...]:
         """
         Precomputes evenly distributed boresight camera poses.
-
         The first and final episode frames are always checkpoints when the
         episode contains more than one frame.
         """
+
         checkpoint_count = min(self.camera_checkpoint_count, self.num_frames)
 
         checkpoint_indices = np.rint(np.linspace(0, self.num_frames - 1, num=checkpoint_count)).astype(np.int64)
@@ -502,18 +502,13 @@ class EpisodePlaybackController:
         client.flush()
 
     def _start_camera_transition(
-        self,
-        client: viser.ClientHandle,
-        target_pose: tf.SE3,
-        target_look_at: np.ndarray,
-        duration: float
-    ) -> None:
+        self, client: viser.ClientHandle, target_pose: tf.SE3, target_look_at: np.ndarray, duration: float) -> None:
         """
         Begin or replace a non-blocking camera transition.
-
         Starting from the client's current interpolated pose prevents
         transition commands from accumulating.
         """
+
         if duration <= 0.0:
             self.camera_transition = None
 
@@ -549,6 +544,7 @@ class EpisodePlaybackController:
         If no transition is active mid-segment (for example after entering boresight mode), 
         the remaining part of that segment is started as a recovery path.
         """
+
         if self.client is None or len(self.camera_checkpoints) < 2:
             return
 
@@ -677,12 +673,10 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
     )
 
     # Add body
-    server.scene.add_box(
+    server.scene.add_glb(
         name="/satellite/body",
-        dimensions=(0.2, 0.6, 0.2),
-        color=Colors.GRAY,
-        material="standard",
-        flat_shading=True
+        glb_data=(Path(__file__).resolve().parent.parent / "assets" / "cubesat.glb").read_bytes(),
+        scale=1.0
     )
 
     origin = [0.0, 0.0, 0.0]
@@ -704,8 +698,8 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
         name="/satellite/axes/x",
         points=axes_points,
         colors=axes_colors,
-        shaft_radius=0.01,
-        head_radius=0.02,
+        shaft_radius=0.005,
+        head_radius=0.01,
         head_length=0.05
     )
 
@@ -719,6 +713,7 @@ def add_unit_sphere(server: viser.ViserServer):
     Args:
         server: Viser server to add objects to scene.
     """
+
     return server.scene.add_icosphere(
         name="/environment/unit_sphere",
         radius=0.999,
@@ -766,6 +761,7 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
     Returns:
         tuple: (vertices_array, faces_array, border).
     """
+    
     radius_sphere = 1.0
     segments_radial = 16 # Number of subdivisions from the KOZ center to its border.
     segments_angular = 96 # Number of subdivisions around the KOZ.
@@ -934,11 +930,11 @@ def add_target(server: viser.ViserServer):
 
     points_stacked = np.stack((points[:-1], points[1:]), axis=1)
 
-    boundary_handle = server.scene.add_line_segments(
-        name="/target/boundary",
+    server.scene.add_line_segments(
+        name="/target/border",
         points=points_stacked,
         colors=Colors.GOLD,
-        line_width=1.0
+        line_width=2.0
     )
 
 
