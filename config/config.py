@@ -58,12 +58,15 @@ class Config():
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]
+        PHASE_TYPE = config_data["env_simulator"]["PHASE_TYPE"]
         MIN_INITIAL_ERROR_ANGLE = config_data["env_simulator"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["env_simulator"]["MAX_INITIAL_ERROR_ANGLE"]
         MIN_INITIAL_ANGULAR_VELOCITY = config_data["env_simulator"]["MIN_INITIAL_ANGULAR_VELOCITY"]
         MAX_INITIAL_ANGULAR_VELOCITY = config_data["env_simulator"]["MAX_INITIAL_ANGULAR_VELOCITY"]
         MIN_HALF_ANGLE_KOZ = config_data["env_simulator"]["MIN_HALF_ANGLE_KOZ"]
         MAX_HALF_ANGLE_KOZ = config_data["env_simulator"]["MAX_HALF_ANGLE_KOZ"]
+        MIN_NR_KOZ = config_data["env_simulator"]["MIN_NR_KOZ"]
+        MAX_NR_KOZ = config_data["env_simulator"]["MAX_NR_KOZ"]
 
     
 config = Config()

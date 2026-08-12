@@ -44,12 +44,15 @@
 
     "env_simulator": {
         "MAX_STEPS": 3000,
-        "MIN_INITIAL_ERROR_ANGLE": 0.0,
-        "MAX_INITIAL_ERROR_ANGLE": 0.0,
+        "PHASE_TYPE": "phase_2",
+        "MIN_INITIAL_ERROR_ANGLE": 90.0,
+        "MAX_INITIAL_ERROR_ANGLE": 90.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.0,
-        "MIN_HALF_ANGLE_KOZ": 0.0,
-        "MAX_HALF_ANGLE_KOZ": 0.0
+        "MIN_HALF_ANGLE_KOZ": 30.0,
+        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_NR_KOZ": 3,
+        "MAX_NR_KOZ": 3
     }
 }
 
