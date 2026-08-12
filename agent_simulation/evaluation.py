@@ -109,8 +109,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     obs = eval_env.reset()
     done = False
-    normal_vector_koz = eval_env.get_attr("normal_vector_koz")[0]
-    half_angle_koz = eval_env.get_attr("half_angle_koz")[0]
+    normal_vector_koz = eval_env.get_attr("active_koz_config")[0]["normal_vector"][0]
+    half_angle_koz = eval_env.get_attr("active_koz_config")[0]["half_angle_rad"][0]
     min_margin_koz = 0
     cnt_Koz_violations = 0
     zones_mask = eval_env.get_original_obs()["zones_mask"][0]
@@ -542,7 +542,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
     t_end = time.time()
 
     print()
