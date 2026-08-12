@@ -274,7 +274,9 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     torque_1_prev = torque_prev[0]
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
-    margin_koz = state_koz[0][0] # TODO: support multiple KOZs
+    koz_margins = state_koz.T[0] # Transform to swap dimensions and get all margin angles
+    koz_margins.sort(0) # Sort angles ascending
+    koz_margin_min = koz_margins[0]
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -359,10 +361,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Penalty for entering / being close to keep out zone
         r5 = 0.0
         if phase == 2:
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             else:
-                r5 = -1.0*math.exp(-66.0*margin_koz)
+                r5 = -1.0*math.exp(-66.0*koz_margin_min)
 
         r_total = r1 + r3 + r4 + r5
 
@@ -397,11 +399,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0*math.exp(-10.0*margin_koz)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0*math.exp(-10.0*koz_margin_min)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -426,10 +428,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -455,11 +457,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -494,12 +496,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -535,11 +537,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -573,12 +575,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -614,11 +616,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -650,12 +652,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -691,11 +693,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -727,12 +729,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -768,11 +770,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -800,10 +802,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -837,11 +839,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -869,12 +871,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -910,11 +912,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -942,12 +944,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -983,11 +985,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1015,10 +1017,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1052,11 +1054,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == "phase 2":
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1088,12 +1090,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1133,11 +1135,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1172,12 +1174,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1215,11 +1217,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1250,10 +1252,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1282,11 +1284,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1317,10 +1319,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1355,11 +1357,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1394,12 +1396,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1431,11 +1433,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1459,10 +1461,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1496,11 +1498,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1524,10 +1526,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1561,11 +1563,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1589,10 +1591,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1626,11 +1628,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1655,10 +1657,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1692,11 +1694,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1728,12 +1730,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1769,11 +1771,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -1.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -1806,12 +1808,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
                     if err_phi_current > 0.25:
                         r1 += 0.01
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1846,11 +1848,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -2.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -2.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
 
             # Add persistent penalty for the remaining episode once inside KOZ
             if koz_violation_cnt > 0:
@@ -1880,10 +1882,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1916,11 +1918,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -2.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -2.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
 
             # Add persistent penalty for the remaining episode once inside KOZ
             if koz_violation_cnt > 0:
@@ -1950,10 +1952,10 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         # Phase 2
         else:      
             if err_phi_delta >= 0:
-                if margin_koz > 0.17:
+                if koz_margin_min > 0.17:
                     r1 = err_phi_delta
-                elif margin_koz > 0:
-                    r1 = err_phi_delta * (margin_koz/0.17)
+                elif koz_margin_min > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
                 else:
                     r1 = 0
             
@@ -1986,11 +1988,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -2.0
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -2.0 * (1.0 - margin_koz/0.17)
+            elif koz_margin_min < 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
 
             # Add persistent penalty for the remaining episode once inside KOZ
             if koz_violation_cnt > 0:
@@ -2033,7 +2035,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -1.0
             # No penalty if farther away
             else:
@@ -2070,11 +2072,11 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r5 = 0.0
         if phase == 2:
             # Maximum penalty inside of KOZ
-            if margin_koz <= 0.0:
+            if koz_margin_min <= 0.0:
                 r5 = -0.01
             # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif margin_koz < 0.17:
-                r5 = -0.01*math.exp(-60.0*margin_koz)
+            elif koz_margin_min < 0.17:
+                r5 = -0.01*math.exp(-60.0*koz_margin_min)
             # No penalty if farther away
             else:
                 r5 = 0.0
@@ -2201,8 +2203,6 @@ class BasiliskRWEnv(gym.Env):
         self.settled = False
         self.settling_time = None  # means not settled
         self.settling_threshold_deg = 0.25  # degrees for considering "settled"
-        self.min_margin_koz = 0.0
-        self.entered_koz_count = 0
 
         self.x_axis = np.array([1, 0, 0], dtype=np.float64) # Boresight vector (body frame)
 
@@ -2307,8 +2307,6 @@ class BasiliskRWEnv(gym.Env):
             # For each additional KOZ, generate another KOZ
             for koz_nr in range(2, self.current_nr_koz+1):
 
-                print(f"DEBUG LOOP {koz_nr}")
-
                 # Limit: max 3 KOZs
                 if koz_nr > 3:
                     break
@@ -2324,7 +2322,6 @@ class BasiliskRWEnv(gym.Env):
                 deviation_angle = half_angle_koz_1 + MARGIN + half_angle_koz + np.random.uniform(0, half_angle_koz)
                 deviation_angle = deviation_angle * direction
 
-                print(f"DEBUG DEVIATION {deviation_angle * 180 / np.pi}")
 
                 normal_vector_koz = (normal_vector_koz_1 * np.cos(deviation_angle) + np.cross(rotation_axis, normal_vector_koz_1) 
                     * np.sin(deviation_angle) + rotation_axis*np.dot(rotation_axis,normal_vector_koz_1) * (1-np.cos(deviation_angle)))
@@ -2349,19 +2346,18 @@ class BasiliskRWEnv(gym.Env):
         return np.concatenate([quat, omega, omega_rw]).astype(np.float64)
     
     def _get_koz_state(self, quat):
-        
-        koz_state = np.zeros((self.MAX_ZONES, self.KOZ_FEATURE_DIM), dtype=np.float64)
+        init_features_state = np.array([np.pi, 1, 0, 0], dtype=np.float64)
+        koz_state = np.tile(init_features_state, (self.MAX_ZONES,1))
 
-        # TODO: support multiple KOZs
         if self.current_nr_koz > 0:
-            margin_koz = calc_margin_koz(quat, self.active_koz_config["normal_vector"][0], self.active_koz_config["half_angle_rad"][0])
-            normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.active_koz_config["normal_vector"][0], quat)
-            direction_vector_bf = normal_vector_bf - self.x_axis
 
-            koz_state[0][0] = np.array(margin_koz, dtype=np.float64) 
-            koz_state[0][1:4] = np.array(direction_vector_bf, dtype=np.float64)
+            for koz_idx in range(self.current_nr_koz):
+                margin_koz = calc_margin_koz(quat, self.active_koz_config["normal_vector"][koz_idx], self.active_koz_config["half_angle_rad"][koz_idx])
+                normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.active_koz_config["normal_vector"][koz_idx], quat)
+                direction_vector_bf = normal_vector_bf - self.x_axis
 
-        # TODO: sort
+                koz_state[koz_idx][0] = np.array(margin_koz, dtype=np.float64) 
+                koz_state[koz_idx][1:4] = np.array(direction_vector_bf, dtype=np.float64)
 
         return koz_state
     
@@ -2443,25 +2439,6 @@ class BasiliskRWEnv(gym.Env):
             "half_angle_rad": []
         }
 
-        if self.current_nr_koz > 0:
-            print(f"DEBUG CURRENT {self.current_nr_koz}")
-            # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
-            self._generate_keep_out_zones(self.active_koz_config, q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
-            
-            # Calculate margin angle to keep out zone
-            margin_koz = calc_margin_koz(q_array_initial, self.active_koz_config["normal_vector"][0], self.active_koz_config["half_angle_rad"][0])
-
-        sat_state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
-        koz_state = self._get_koz_state(q_array_initial)
-        koz_mask_state = self._get_koz_mask_state()
-        self.state = {
-            "satellite": sat_state.astype(np.float64),
-            "zones": koz_state.astype(np.float64),
-            "zones_mask": koz_mask_state.astype(np.float64)
-        }
-
-        self.torque_prev = np.zeros(3, dtype=np.float64)
-
         # Initialize custom metrics for this episode
         self.initial_error_angle = initial_error_angle
         self.initial_angular_velocity_mag = np.linalg.norm(omega_initial) * 180 / np.pi  # deg/s
@@ -2473,13 +2450,31 @@ class BasiliskRWEnv(gym.Env):
         self.entered_koz_count = 0
 
         if self.current_nr_koz > 0:
-            # Update min margin koz angle
-            if margin_koz < self.min_margin_koz:
-                self.min_margin_koz = margin_koz
+            # Generate keep out zones, vector in inertial frame (--> constant per episode), half angle in radians
+            self._generate_keep_out_zones(self.active_koz_config, q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
 
-            # Update entered koz count
-            if margin_koz < 0.0:
-                self.entered_koz_count += 1
+            for koz_idx in range(self.current_nr_koz):
+                # Calculate margin angle to keep out zone
+                margin_koz = calc_margin_koz(q_array_initial, self.active_koz_config["normal_vector"][koz_idx], self.active_koz_config["half_angle_rad"][koz_idx])
+
+                # Update min margin koz angle
+                if margin_koz < self.min_margin_koz:
+                    self.min_margin_koz = margin_koz
+
+                # Update entered koz count
+                if margin_koz < 0.0:
+                    self.entered_koz_count += 1
+
+        sat_state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
+        koz_state = self._get_koz_state(q_array_initial)
+        koz_mask_state = self._get_koz_mask_state()
+        self.state = {
+            "satellite": sat_state.astype(np.float64),
+            "zones": koz_state.astype(np.float64),
+            "zones_mask": koz_mask_state.astype(np.float64)
+        }
+
+        self.torque_prev = np.zeros(3, dtype=np.float64)
 
         # Copy state into observation
         obs = copy.deepcopy(self.state)
@@ -2505,15 +2500,18 @@ class BasiliskRWEnv(gym.Env):
         reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt)
 
         # Update KOZ metrics
-        # Update min margin koz angle
-        margin_koz = self.state["zones"][0][0] # TODO: support multiple KOZs
-       
-        if margin_koz < self.min_margin_koz:
-            self.min_margin_koz = margin_koz
+        if self.current_nr_koz > 0:
+            for koz_idx in range(self.current_nr_koz):
+                # Calculate margin angle to keep out zone
+                margin_koz = self.state["zones"][koz_idx][0]
 
-        # Update entered koz count
-        if margin_koz < 0.0:
-            self.entered_koz_count += 1
+                # Update min margin koz angle
+                if margin_koz < self.min_margin_koz:
+                    self.min_margin_koz = margin_koz
+
+                # Update entered koz count
+                if margin_koz < 0.0:
+                    self.entered_koz_count += 1
 
         # Copy state into observation
         obs = copy.deepcopy(self.state)
@@ -2624,13 +2622,12 @@ class LSTM(BaseFeaturesExtractor):
         self.zones_max = zones_max
         self.lstm_in_dim = lstm_in_dim
 
-
         # The LSTM 
         self.lstm = th.nn.LSTM(
             input_size=lstm_in_dim,
             hidden_size=lstm_out_dim,
-            num_layers=1, # TODO: clarify
-            batch_first=True # Because TODO
+            num_layers=1,
+            batch_first=True # Expects batch dimension first
         )
 
     def forward(self, observations):
@@ -2661,6 +2658,14 @@ class LSTM(BaseFeaturesExtractor):
             # Get all observations (and their KOZ count) with at least one KOZ from the batch
             non_zero_zones = zones_obs[non_zero_indices]
             non_zero_zones_count = zones_count[non_zero_indices]
+            zones_mask_filtered = zones_mask[non_zero_indices] # Removes observations from zones mask with no KOZ
+
+            # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
+            koz_margins = non_zero_zones[:,:,0] # Margin is index 0
+            koz_margins_mod = koz_margins.masked_fill(~zones_mask_filtered.bool(), float("-inf")) # Replace inactive KOZ margins values with -inf for sorting
+            sort_indices = th.argsort(koz_margins_mod, dim=1, descending=True)
+            gather_index = sort_indices.unsqueeze(-1).expand(-1, -1, non_zero_zones.shape[-1]) # Transform index dimension from (batch,4) to (batch,4,4) to also sort other KOZ features besides margin.
+            non_zero_zones = th.gather(non_zero_zones, dim=1, index=gather_index) # Apply sorting to unmodified obs.
 
             # Create an LSTM sequence (consisting of as many LSTM cells as there are KOZs) for each batch obs (which has at least 1 KOZ)
             lstm_sequences = th.nn.utils.rnn.pack_padded_sequence(
@@ -2675,7 +2680,6 @@ class LSTM(BaseFeaturesExtractor):
 
             # Store the final hidden state of each batch observation
             self.lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
-            #self.lstm_out[non_zero_indices] = zones_obs[non_zero_indices, 0]
 
         # Combine satellite obs and LSTM output
         combined = th.cat([sat_obs, self.lstm_out], dim=1)
