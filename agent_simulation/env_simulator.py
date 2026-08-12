@@ -21,7 +21,7 @@ from config.config import Config
 from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_angular_velocity_wheels
 
 
-def create_simulation_env(initial_state):
+def create_simulation_env(initial_state, phase_type: str):
     """
     Create the simulation environment.
     Args:
@@ -30,7 +30,7 @@ def create_simulation_env(initial_state):
     Returns:
         sim_env: The created simulation environment
     """
-    sim_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state)
+    sim_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)
     return sim_env
 
 
@@ -68,35 +68,41 @@ def start_simulation(env: BasiliskRWEnv):
     """
     observation = env.reset()
     times = np.linspace(0, env.max_steps/10, env.max_steps)  # Assuming dt=0.1s
-    states= []
+    sat_states = []
+    koz_states = []
     torques = []
-    normal_vector_koz = env.normal_vector_koz
-    half_angle_koz = env.half_angle_koz
+    normal_vector_koz_array = env.active_koz_config["normal_vector"]
+    half_angle_koz_array = env.active_koz_config["half_angle_rad"]
+
+    print(f"DEBUG: START")
+    print(normal_vector_koz_array)
 
     done = False
     while not done:
         action = action_schedule(env.steps * env.dt)
         observation, reward, done, truncated, info = env.step(action)
 
-        states.append(observation)
+        sat_states.append(observation["satellite"])
+        koz_states.append(observation["zones"])
         torques.append(scale_torque*action)
     env.close()
 
-    states_array =  np.array(states)
+    sat_states_array =  np.array(sat_states)
+    koz_states_array = np.array(koz_states)
     torques_array = np.array(torques)
 
     # store the norm of quaternions
-    norm_q = np.linalg.norm(states_array[:, :4], axis=1)
+    norm_q = np.linalg.norm(sat_states_array[:, :4], axis=1)
 
     simulation_data = {
-        "quaternion": states_array[:, :4],
+        "quaternion": sat_states_array[:, :4],
         "quaternion_norm": norm_q,
         "torques": torques_array,
-        "omega": states_array[:, 4:7]*scale_angular_velocity_sat,
+        "omega": sat_states_array[:, 4:7],
         "times": times,
-        "wheel_velocities": states_array[:, 7:10]*scale_angular_velocity_wheels,
-        "normal_vector_koz": normal_vector_koz,
-        "half_angle_koz": half_angle_koz
+        "wheel_velocities": sat_states_array[:, 7:10],
+        "normal_vector_koz_array": normal_vector_koz_array,
+        "half_angle_koz_array": half_angle_koz_array
         }
     
     return simulation_data
@@ -117,8 +123,8 @@ def plot_actual_attitude(simulation_data: dict):
     torques_array = simulation_data["torques"]
     times = simulation_data["times"]
     wheel_velocities = simulation_data["wheel_velocities"]
-    normal_vector_koz = simulation_data["normal_vector_koz"]
-    half_angle_koz = simulation_data["half_angle_koz"]
+    normal_vector_koz_array = simulation_data["normal_vector_koz_array"]
+    half_angle_koz_array = simulation_data["half_angle_koz_array"]
 
     def quat_to_axis_angle(q):
         """Convert quaternion to rotation axis and angle"""
@@ -171,10 +177,10 @@ def plot_actual_attitude(simulation_data: dict):
     # Calculate keep out zone margin angles between body axis and koz normal vector
     margin_angles_koz = []
     for i in range(len(body_axis_arr)):
-        cos_theta = np.dot(body_axis_arr[i], normal_vector_koz) / (np.linalg.norm(body_axis_arr[i]) * np.linalg.norm(normal_vector_koz))
+        cos_theta = np.dot(body_axis_arr[i], normal_vector_koz_array[0]) / (np.linalg.norm(body_axis_arr[i]) * np.linalg.norm(normal_vector_koz_array[0]))
         cos_theta = np.clip(cos_theta, -1.0, 1.0)  # Clip to avoid numerical issues
         theta = np.arccos(cos_theta)
-        margin_angle = (theta - half_angle_koz) * 180.0 / np.pi  # Convert to degrees
+        margin_angle = (theta - half_angle_koz_array[0]) * 180.0 / np.pi  # Convert to degrees
         margin_angles_koz.append(margin_angle)
     
     fig = plt.figure(figsize=(18, 12))
@@ -190,42 +196,51 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.scatter(1, 0, 0, color="gold", s=150, marker="*", label="Target")
     
 
-    def _generate_keep_out_zone_circle():
+    def _generate_keep_out_zone_circles():
         # Create circle points for the keep out zone
 
         theta = np.linspace(0, 2 * np.pi, 100)
-        circle_points = []
+        circle_points_array = []
 
-        for angle in theta:
-            # Generate points on the circle in the plane perpendicular to the normal vector
-            v = np.array([np.cos(angle), np.sin(angle), 0])
+        for idx in range(len(normal_vector_koz_array)):
+            circle_points = []
 
-            # Rotate v to be perpendicular to koz_normal
-            if np.allclose(normal_vector_koz, [0, 0, 1]):
-                rot_axis = np.array([1, 0, 0])
-            else:
-                rot_axis = np.cross([0, 0, 1], normal_vector_koz)
-                rot_axis /= np.linalg.norm(rot_axis)
+            for angle in theta:
+                # Generate points on the circle in the plane perpendicular to the normal vector
+                v = np.array([np.cos(angle), np.sin(angle), 0])
 
-            angle_to_rotate = np.arccos(np.dot(normal_vector_koz, [0, 0, 1]))
+                # Rotate v to be perpendicular to koz_normal
+                if np.allclose(normal_vector_koz_array[idx], [0, 0, 1]):
+                    rot_axis = np.array([1, 0, 0])
+                else:
+                    rot_axis = np.cross([0, 0, 1], normal_vector_koz_array[idx])
+                    rot_axis /= np.linalg.norm(rot_axis)
 
-            # Rodrigues' rotation formula
-            v_rotated = (v * np.cos(angle_to_rotate) +
-                        np.cross(rot_axis, v) * np.sin(angle_to_rotate) +
-                        rot_axis * np.dot(rot_axis, v) * (1 - np.cos(angle_to_rotate)))
-            
-            # Scale to the radius of the keep out zone circle
-            radius = np.sin(half_angle_koz)
-            circle_point = normal_vector_koz * np.cos(half_angle_koz) + v_rotated * radius
-            circle_points.append(circle_point)
+                angle_to_rotate = np.arccos(np.dot(normal_vector_koz_array[idx], [0, 0, 1]))
 
-        return circle_points
+                # Rodrigues' rotation formula
+                v_rotated = (v * np.cos(angle_to_rotate) +
+                            np.cross(rot_axis, v) * np.sin(angle_to_rotate) +
+                            rot_axis * np.dot(rot_axis, v) * (1 - np.cos(angle_to_rotate)))
+                
+                # Scale to the radius of the keep out zone circle
+                radius = np.sin(half_angle_koz_array[idx])
+                circle_point = normal_vector_koz_array[idx] * np.cos(half_angle_koz_array[idx]) + v_rotated * radius
+                circle_points.append(circle_point)
+
+            circle_points_array.append(circle_points)
+
+        return circle_points_array
 
     # Plot keep out zone as a ring on the unit sphere
-    if normal_vector_koz is not None and half_angle_koz is not None:
-        circle_points = _generate_keep_out_zone_circle()
-        circle_points = np.array(circle_points)
-        ax1.plot(circle_points[:, 0], circle_points[:, 1], circle_points[:, 2], "orange", linewidth=2, label="Keep Out Zone")
+    if normal_vector_koz_array is not None and half_angle_koz_array is not None:
+        circle_points_array = _generate_keep_out_zone_circles()
+        circle_points_array = np.array(circle_points_array)
+
+        print(f"DEBUG: LEN {len(normal_vector_koz_array)}")
+        ax1.plot(circle_points_array[0][:, 0], circle_points_array[0][:, 1], circle_points_array[0][:, 2], "orange", linewidth=2, label="Keep Out Zone 1")
+        ax1.plot(circle_points_array[1][:, 0], circle_points_array[1][:, 1], circle_points_array[1][:, 2], "red", linewidth=2, label="Keep Out Zone 2") if len(normal_vector_koz_array) > 1 else None
+        ax1.plot(circle_points_array[2][:, 0], circle_points_array[2][:, 1], circle_points_array[2][:, 2], "purple", linewidth=2, label="Keep Out Zone 3") if len(normal_vector_koz_array) > 2 else None
     
     
     # Draw unit sphere wireframe
@@ -311,8 +326,10 @@ if __name__ == "__main__":
         Config.EnvSimulator.MAX_INITIAL_ANGULAR_VELOCITY,
         Config.EnvSimulator.MAX_STEPS,
         Config.EnvSimulator.MIN_HALF_ANGLE_KOZ,
-        Config.EnvSimulator.MAX_HALF_ANGLE_KOZ
+        Config.EnvSimulator.MAX_HALF_ANGLE_KOZ,
+        Config.EnvSimulator.MIN_NR_KOZ,
+        Config.EnvSimulator.MAX_NR_KOZ
     ] 
-    env = create_simulation_env(INITIAL_STATE)
+    env = create_simulation_env(INITIAL_STATE, Config.EnvSimulator.PHASE_TYPE)
     simulation_data = start_simulation(env)
     plot_actual_attitude(simulation_data)
