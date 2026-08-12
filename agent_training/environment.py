@@ -274,9 +274,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     torque_1_prev = torque_prev[0]
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
-    koz_margins = state_koz.T[0] # Transform to swap dimensions and get all margin angles
-    koz_margins.sort(0) # Sort angles ascending
-    koz_margin_min = koz_margins[0]
+    koz_margin_min = np.min(state_koz[:, 0]) # For KOZ related reward calculation, use the minimum margin angle of all KOZs.
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -2346,8 +2344,8 @@ class BasiliskRWEnv(gym.Env):
         return np.concatenate([quat, omega, omega_rw]).astype(np.float64)
     
     def _get_koz_state(self, quat):
-        init_features_state = np.array([np.pi, 1, 0, 0], dtype=np.float64)
-        koz_state = np.tile(init_features_state, (self.MAX_ZONES,1))
+        inactive_features_state = np.array([np.pi, 1, 0, 0], dtype=np.float64)
+        koz_state = np.tile(inactive_features_state, (self.MAX_ZONES,1))
 
         if self.current_nr_koz > 0:
 
@@ -2662,7 +2660,7 @@ class LSTM(BaseFeaturesExtractor):
 
             # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
             koz_margins = non_zero_zones[:,:,0] # Margin is index 0
-            koz_margins_mod = koz_margins.masked_fill(~zones_mask_filtered.bool(), float("-inf")) # Replace inactive KOZ margins values with -inf for sorting
+            koz_margins_mod = koz_margins.masked_fill(~zones_mask_filtered.bool(), float("-inf")) # Replace inactive KOZ margins values with -inf for sorting, so that they end up last and cut off by pack_padded_sequence.
             sort_indices = th.argsort(koz_margins_mod, dim=1, descending=True)
             gather_index = sort_indices.unsqueeze(-1).expand(-1, -1, non_zero_zones.shape[-1]) # Transform index dimension from (batch,4) to (batch,4,4) to also sort other KOZ features besides margin.
             non_zero_zones = th.gather(non_zero_zones, dim=1, index=gather_index) # Apply sorting to unmodified obs.
