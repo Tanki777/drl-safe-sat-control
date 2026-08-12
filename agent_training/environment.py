@@ -1678,9 +1678,6 @@ class BasiliskRWEnv(gym.Env):
 
         self.PHASE = phase_type
 
-        self.normal_vector_koz = None
-        self.half_angle_koz = None
-
         # Custom metrics tracking for TensorBoard
         self.initial_error_angle = 0.0
         self.initial_angular_velocity_mag = 0.0
@@ -1750,34 +1747,76 @@ class BasiliskRWEnv(gym.Env):
         quaternion = np.array([q0, q_vec[0], q_vec[1], q_vec[2]], dtype=np.float64)
         return normalize_quaternion(quaternion)
     
-    def _generate_keep_out_zone(self, initial_quaternion, min_half_angle_deg, max_half_angle_deg):
+    def _generate_keep_out_zones(self, active_koz_config: dict, initial_quaternion, min_half_angle_deg, max_half_angle_deg):
         """
         Generates a keep out zone defined by a normal vector and half-angle.
+
         Args:
+            active_koz_config: The dictionary containing the active KOZ normal vectors and half angles
+                                of this episode.
             initial_quaternion: The initial attitude quaternion of the satellite.
             min_half_angle_deg: Minimum half-angle of the keep out zone in degrees.
             max_half_angle_deg: Maximum half-angle of the keep out zone in degrees.
-        Returns:
-            res: A tuple containing:
-            normal_vector_koz: The normal vector of the keep out zone in inertial frame.
-            half_angle_koz: The half-angle of the keep out zone in radians.
         """
+
         # Convert initial boresight quaternion to vector in inertial frame
         initial_vector_boresight_inertial = rotate_vector_by_quaternion(self.x_axis, initial_quaternion) #r_F inertial frame
 
-        # Calculate normal vector of keep out zone to be the bisector (middle between initial boresight and target boresight, same plane)
-        normal_vector_koz = normalize_vector(initial_vector_boresight_inertial + self.x_axis)
+        # First KOZ is always along shortest trajectory around center with some deviation
+        # Calculate initial normal vector of keep out zone to be the bisector (middle between initial boresight and target boresight, same plane)
+        bisector = normalize_vector(initial_vector_boresight_inertial + self.x_axis)
+
+        # Calculate rotation axis such that rotated bisector keeps same angle to both boresight and initial attitude
+        rotation_axis = normalize_vector(self.x_axis - initial_vector_boresight_inertial) 
 
         # Random half-angle between min and max
-        half_angle_koz = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
+        half_angle_koz_1 = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
 
-        # Test: set half angle to 0 if (effective) initial error angle is not large enough
-        # if self.initial_error_angle - (half_angle_koz * 180 / np.pi) < 30:
-        #     half_angle_koz = 0
+        # Rotate the bisector by a deviation angle using rodrigues formula
+        # Deviation angle is randomly sampled between [-half_angle, half_angle]
+        deviation_angle = np.random.uniform(-half_angle_koz_1, half_angle_koz_1)
+        normal_vector_koz_1 = (bisector * np.cos(deviation_angle) + np.cross(rotation_axis, bisector) 
+            * np.sin(deviation_angle) + rotation_axis*np.dot(rotation_axis,bisector) * (1-np.cos(deviation_angle)))
 
-        return normal_vector_koz, half_angle_koz
+        # Add first KOZ
+        active_koz_config["normal_vector"].append(normal_vector_koz_1)
+        active_koz_config["half_angle_rad"].append(half_angle_koz_1)
 
-    
+        # If only 1 KOZ, return.
+        if self.current_nr_koz == 1:
+            return
+        else:
+            # Minimum margin angle between two KOZs
+            MARGIN = 20.0 * np.pi / 180.0
+
+            # For each additional KOZ, generate another KOZ
+            for koz_nr in range(2, self.current_nr_koz+1):
+
+                print(f"DEBUG LOOP {koz_nr}")
+
+                # Limit: max 3 KOZs
+                if koz_nr > 3:
+                    break
+
+                # Random half angle
+                half_angle_koz = np.random.uniform(min_half_angle_deg, max_half_angle_deg) * np.pi / 180  # in radians
+
+                # Second KOZ is arranged left, third KOZ right to first KOZ.
+                direction = 1 if koz_nr == 2 else -1
+
+                # Rotate the bisector by a deviation angle using rodrigues formula
+                # Deviation angle from first KOZ is chosen to guarantee min margin between KOZs and some deviation for new KOZ
+                deviation_angle = half_angle_koz_1 + MARGIN + half_angle_koz + np.random.uniform(0, half_angle_koz)
+                deviation_angle = deviation_angle * direction
+
+                print(f"DEBUG DEVIATION {deviation_angle * 180 / np.pi}")
+
+                normal_vector_koz = (normal_vector_koz_1 * np.cos(deviation_angle) + np.cross(rotation_axis, normal_vector_koz_1) 
+                    * np.sin(deviation_angle) + rotation_axis*np.dot(rotation_axis,normal_vector_koz_1) * (1-np.cos(deviation_angle)))
+        
+                # Add new KOZ
+                active_koz_config["normal_vector"].append(normal_vector_koz)
+                active_koz_config["half_angle_rad"].append(half_angle_koz)
 
     def _get_sat_state(self):
         state = self.satellite.scStateOutMsg.read()
@@ -1800,8 +1839,8 @@ class BasiliskRWEnv(gym.Env):
 
         # TODO: support multiple KOZs
         if self.current_nr_koz > 0:
-            margin_koz = calc_margin_koz(quat, self.normal_vector_koz, self.half_angle_koz)
-            normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.normal_vector_koz, quat)
+            margin_koz = calc_margin_koz(quat, self.active_koz_config["normal_vector"][0], self.active_koz_config["half_angle_rad"][0])
+            normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.active_koz_config["normal_vector"][0], quat)
             direction_vector_bf = normal_vector_bf - self.x_axis
 
             koz_state[0][0] = np.array(margin_koz, dtype=np.float64) 
@@ -1852,7 +1891,7 @@ class BasiliskRWEnv(gym.Env):
         self.steps = 0
         self.sim_time = 0.0
 
-        # Generate random initial attitude error (0° to max_initial_angle)
+        # Generate random initial attitude error
         q_array_initial = self._generate_quaternion_with_vector_angle(self.x_axis, self.min_initial_angle, self.max_initial_angle)
         
         # Generate random initial angular velocities
@@ -1884,12 +1923,18 @@ class BasiliskRWEnv(gym.Env):
         else:
             self.current_nr_koz = 0
 
+        self.active_koz_config = {
+            "normal_vector": [],
+            "half_angle_rad": []
+        }
+
         if self.current_nr_koz > 0:
+            print(f"DEBUG CURRENT {self.current_nr_koz}")
             # Generate keep out zone, vector in inertial frame (--> constant per episode), half angle in radians
-            self.normal_vector_koz, self.half_angle_koz = self._generate_keep_out_zone(q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
+            self._generate_keep_out_zones(self.active_koz_config, q_array_initial, self.min_half_angle_koz, self.max_half_angle_koz)
             
             # Calculate margin angle to keep out zone
-            margin_koz = calc_margin_koz(q_array_initial, self.normal_vector_koz, self.half_angle_koz)
+            margin_koz = calc_margin_koz(q_array_initial, self.active_koz_config["normal_vector"][0], self.active_koz_config["half_angle_rad"][0])
 
         sat_state = np.concatenate((q_array_initial, omega_initial, wheel_velocities_initial))
         koz_state = self._get_koz_state(q_array_initial)
