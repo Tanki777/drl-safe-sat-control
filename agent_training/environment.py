@@ -2660,7 +2660,7 @@ class LSTM(BaseFeaturesExtractor):
             zones_mask_filtered = zones_mask[non_zero_indices] # Removes observations from zones mask with no KOZ
 
             # Manually normalize KOZ observation.
-            non_zero_zones = non_zero_zones / th.Tensor.new_tensor(self.KOZ_FEATURE_SCALING)
+            non_zero_zones = non_zero_zones / non_zero_zones.new_tensor(self.KOZ_FEATURE_SCALING)
 
             # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
             koz_margins = non_zero_zones[:,:,0] # Margin is index 0
