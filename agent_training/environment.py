@@ -2611,6 +2611,7 @@ class LSTM(BaseFeaturesExtractor):
         self.sat_obs_dim = sat_obs_dim
         self.lstm_out_dim = lstm_out_dim
         self.total_obs_dim = sat_obs_dim + lstm_out_dim
+        self.KOZ_FEATURE_SCALING = (np.pi, 2.0, 2.0, 2.0)
 
         # Number of features for the extractor corresponds to the combined observation, as the extractor also combines it.
         super().__init__(observation_space=observation_space, features_dim=self.total_obs_dim)
@@ -2657,6 +2658,9 @@ class LSTM(BaseFeaturesExtractor):
             non_zero_zones = zones_obs[non_zero_indices]
             non_zero_zones_count = zones_count[non_zero_indices]
             zones_mask_filtered = zones_mask[non_zero_indices] # Removes observations from zones mask with no KOZ
+
+            # Manually normalize KOZ observation.
+            non_zero_zones = non_zero_zones / th.Tensor.new_tensor(self.KOZ_FEATURE_SCALING)
 
             # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
             koz_margins = non_zero_zones[:,:,0] # Margin is index 0

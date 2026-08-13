@@ -438,8 +438,8 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     if not continue_training or not os.path.exists(latest_model_path):
         print(f"|-----{YELLOW_START}Creating new model from scratch...{COLOR_END}")
 
-        # Add normalization wrapper
-        env = VecNormalize(env, norm_reward=False, norm_obs_keys=["satellite", "zones"]) # Do not normalize the zones mask
+        # Add normalization wrapper for the satellite state, not for the KOZ state as that introduces clipping issues on phase transition.
+        env = VecNormalize(env, norm_reward=False, norm_obs_keys=["satellite"])
 
         # Create LSTM extractor
         policy_kwargs = dict(
