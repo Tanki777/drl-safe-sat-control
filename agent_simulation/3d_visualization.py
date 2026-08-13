@@ -16,9 +16,10 @@ from agent_simulation.evaluation import load_evaluation_data
 from agent_training.environment import normalize_vector, rotate_vector_by_quaternion
 from agent_training.constants import Constants
 
+repo_parent_dir = os.path.dirname(drl_repo_dir)
+eval_data_dir = os.path.join(repo_parent_dir, "evaluation_data")
 
 DEFAULT_CAMERA_CHECKPOINT_COUNT = 200
-
 
 # Define custom colors
 class Colors():
@@ -29,7 +30,17 @@ class Colors():
     GOLD = (194, 168, 0)
     GRAY = (180, 190, 205)
     RED = (255, 0, 0)
+    ORANGE = (255, 130, 0)
+    MAGENTA = (255, 0, 200)
+    MINT = (0, 255, 200)
     DARK_BLUE = (0, 0, 100)
+
+    KOZ_COLORS_ITERATOR = [
+        RED,
+        MINT,
+        MAGENTA,
+        ORANGE
+    ]
 
 
 @dataclass
@@ -107,6 +118,17 @@ class EpisodePlaybackController:
 
         self.set_frame(0)
 
+    def _get_episode_selection_options(self, evaluation_file_name: str) -> list:
+        file_path = os.path.join(eval_data_dir, evaluation_file_name)
+        initial_episode_count = len(load_evaluation_data(file_path))
+        options = np.arange(initial_episode_count).tolist() # E.g. 20 --> [0,1,2,...,19]
+
+        # Convert list elements to string
+        for idx in iter(options):
+            options[idx] = str(options[idx])
+
+        return options
+
     def _create_dynamic_objects(self) -> None:
         initial_boresight = self.trajectory_points[0]
 
@@ -125,6 +147,30 @@ class EpisodePlaybackController:
         # Set label name of the GUI panel.
         self.server.gui.set_panel_label("Episode viewer")
 
+        # Add episode selection GUI folder
+        with self.server.gui.add_folder("Episode Selection"):
+            # If evaluation files exist, load them.
+            if os.listdir(eval_data_dir):
+                # Add a dropdown menu to list all evaluation files.
+                self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=os.listdir(eval_data_dir), initial_value=os.listdir(eval_data_dir)[0])
+
+                # Add a dropdown menu to select the episode among the episodes of the selected file.
+                
+
+                self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=self._get_episode_selection_options(os.listdir(eval_data_dir)[0]))
+
+            # Otherwise, show warning.
+            else:
+                # Add a dropdown menu to list all evaluation files. For some reason it is bugged if not using the extra comma here...
+                self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=("Could not find evaluation_data folder",), disabled=True)
+
+                # Add a dropdown menu to select the episode among the episodes of the selected file.
+                self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=("0"), disabled=True)
+
+            # Add a button to load episode
+            self.gui_load_episode = self.server.gui.add_button("Load episode")
+
+            
         # Add a playback GUI folder.
         with self.server.gui.add_folder("Playback"):
 
@@ -176,7 +222,15 @@ class EpisodePlaybackController:
         # Add command to play / pause with spacebar.
         self.command_play_pause = self.server.gui.add_command(label="Toggle play/pause", hotkey="space")
 
+    # TODO: add callbacks for episode selection
     def _register_callbacks(self) -> None:
+
+        # On updating evaluation file selection, update episode GUI selection.
+        @self.gui_evaluation_file.on_update
+        def _(_) -> None:
+
+            new_value = self.gui_evaluation_file.value
+            self.gui_selected_episode.options = self._get_episode_selection_options(new_value)
 
         # On updating the timestep, set new frame.
         @self.gui_timestep.on_update
@@ -650,6 +704,9 @@ class EpisodePlaybackController:
                 # Prevent a large jump when playback resumes.
                 accumulated_frames = 0.0
 
+            # Add sleep to prevent loop from blocking other tasks.
+            time.sleep(1.0 / self.camera_rate)
+
 
 def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser.FrameHandle:
     """
@@ -947,13 +1004,16 @@ def start_server():
     print("|-----Press Ctrl+C to stop the server")
 
     # Load episode data
-    episodes = load_evaluation_data("rewMod22_phFull_3_ph2_schedStage22_3800000_[150.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[1000]_2026-07-21-22-10-16.npz")
-    episode_data = episodes[0] # First episode
+    episodes = load_evaluation_data("rewMod22_ph1_schedPh1v2_3500000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 3]_ep[100]_2026-08-12-20-08-44.npz")
+    episode_data = episodes[5] # First episode
+    koz_cnt = len(episode_data["normal_vector_koz_array"])
 
     # Init theme
     server.gui.configure_theme(show_logo=False, dark_mode=True)
-        
-    add_koz(server, "KOZ 1", episode_data["normal_vector_koz"], episode_data["half_angle_koz"], Colors.RED)
+
+    for koz_idx in range(koz_cnt):
+        add_koz(server, f"KOZ {koz_idx+1}", episode_data["normal_vector_koz_array"][koz_idx], episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
+
     add_target(server)
     #add_unit_sphere(server)
     sat_frame_handle = add_satellite(server, episode_data["quaternion"][0])
