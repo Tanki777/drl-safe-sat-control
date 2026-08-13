@@ -109,8 +109,8 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     obs = eval_env.reset()
     done = False
-    normal_vector_koz = eval_env.get_attr("active_koz_config")[0]["normal_vector"][0]
-    half_angle_koz = eval_env.get_attr("active_koz_config")[0]["half_angle_rad"][0]
+    normal_vector_koz_array = eval_env.get_attr("active_koz_config")[0]["normal_vector"]
+    half_angle_koz_array = eval_env.get_attr("active_koz_config")[0]["half_angle_rad"]
     min_margin_koz = 0
     cnt_Koz_violations = 0
     zones_mask = eval_env.get_original_obs()["zones_mask"][0]
@@ -174,9 +174,9 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         "rewards": rewards_array,
         "cumulative_rewards": cumulative_rewards,
         "times": times,
-        "normal_vector_koz": normal_vector_koz,
-        "half_angle_koz": half_angle_koz,
-        "margin_angles_koz": states_koz_array[:, :, 0] * 180 / np.pi, # TODO: support multiple KOZs
+        "normal_vector_koz_array": normal_vector_koz_array,
+        "half_angle_koz_array": half_angle_koz_array,
+        "margin_angles_koz": states_koz_array[:, :, 0] * 180 / np.pi,
         "direction_koz": states_koz_array[:, :, 1:4],
         "min_margin_koz": min_margin_koz,
         "cnt_Koz_violations": cnt_Koz_violations,
@@ -425,94 +425,94 @@ def load_evaluation_data(file_name: str):
     settled_count = 0
     settled_final_err = []
 
-    for i, episode_data in enumerate(data):
-        if np.mean(np.linalg.norm(episode_data["torques"], axis=1)) > 0.0004 and episode_data["cnt_Koz_violations"] > 0:
-            #print(i,end=",")
-            pass
+    # for i, episode_data in enumerate(data):
+    #     if np.mean(np.linalg.norm(episode_data["torques"], axis=1)) > 0.0004 and episode_data["cnt_Koz_violations"] > 0:
+    #         #print(i,end=",")
+    #         pass
 
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 1.0 and episode_data["cnt_Koz_violations"] > 0:
-            #print(i,end=",")
-            pass
+    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 1.0 and episode_data["cnt_Koz_violations"] > 0:
+    #         #print(i,end=",")
+    #         pass
         
-        # Off-border: no violation, target reached, large KOZ
-        if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi > 10.0 
-            and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz"]*180/np.pi > 25.0):
-            #print(i,end=",")
-            pass
+    #     # Off-border: no violation, target reached, large KOZ
+    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi > 10.0 
+    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
+    #         #print(i,end=",")
+    #         pass
 
-        # Along-border: no violation, target reached, large KOZ
-        if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi < 0.5 
-            and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz"]*180/np.pi > 25.0):
-            #print(i,end=",")
-            pass
+    #     # Along-border: no violation, target reached, large KOZ
+    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi < 0.5 
+    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
+    #         #print(i,end=",")
+    #         pass
         
-        # Stuck: Low episode reward, low control effort, far away from target
-        if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) < 0.0005
-            and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 30.0):
-            #print(i,end=",")
-            pass
+    #     # Stuck: Low episode reward, low control effort, far away from target
+    #     if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) < 0.0005
+    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 30.0):
+    #         #print(i,end=",")
+    #         pass
 
-        # Oscillation: Low episode reward, high control effort, close to target
-        if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) > 0.0008
-            and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 10.0):
-            #print(i,end=",")
-            pass
+    #     # Oscillation: Low episode reward, high control effort, close to target
+    #     if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) > 0.0008
+    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 10.0):
+    #         #print(i,end=",")
+    #         pass
 
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.25:
-            #print(i,end=",")
-            pass
+    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.25:
+    #         #print(i,end=",")
+    #         pass
         
-        # Violation
-        if episode_data["cnt_Koz_violations"] > 0:
-            print(i,end=",")
-            pass
+    #     # Violation
+    #     if episode_data["cnt_Koz_violations"] > 0:
+    #         #print(i,end=",")
+    #         pass
 
-        if episode_data["cumulative_rewards"][-1] < -2800:
-            pass
+    #     if episode_data["cumulative_rewards"][-1] < -2800:
+    #         pass
 
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 120 and episode_data["cumulative_rewards"][-1] > 120:
-            #print(i,end=",")
-            pass
+    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 120 and episode_data["cumulative_rewards"][-1] > 120:
+    #         #print(i,end=",")
+    #         pass
 
-        if np.linalg.norm(episode_data["omega"][-1]) * 180 / np.pi > 2.0:
-            #print(i,end=",")
-            pass
+    #     if np.linalg.norm(episode_data["omega"][-1]) * 180 / np.pi > 2.0:
+    #         #print(i,end=",")
+    #         pass
 
-        if np.mean(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 2.0:
-            #print(i,end=",")
-            pass
+    #     if np.mean(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 2.0:
+    #         #print(i,end=",")
+    #         pass
 
-        if np.max(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 11.0:
-            #print(i,end=",")
-            pass
+    #     if np.max(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 11.0:
+    #         #print(i,end=",")
+    #         pass
 
-        if i == 238:
-            pass
+    #     if i == 238:
+    #         pass
         
-        # if the last attitude error is above 5 degree and the last 50 omega norms are below 0.1 deg/s each
-        omega_settled = True
-        for omega in episode_data["omega"][-200:]:
-            if np.linalg.norm(omega)*180/np.pi > 2.0:
-                omega_settled = False
-        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 5.0 and omega_settled:
-            #print(i,end=",")
-            settled_count += 1
-            settled_final_err.append(2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi)
-            pass
+    #     # if the last attitude error is above 5 degree and the last 50 omega norms are below 0.1 deg/s each
+    #     omega_settled = True
+    #     for omega in episode_data["omega"][-200:]:
+    #         if np.linalg.norm(omega)*180/np.pi > 2.0:
+    #             omega_settled = False
+    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 5.0 and omega_settled:
+    #         #print(i,end=",")
+    #         settled_count += 1
+    #         settled_final_err.append(2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi)
+    #         pass
 
-        if not omega_settled:
-            #print(i,end=",")
-            pass
+    #     if not omega_settled:
+    #         #print(i,end=",")
+    #         pass
         
-        if reward_min is None:
-            reward_min = episode_data["cumulative_rewards"][-1]
-            reward_min_idx = i
-        if episode_data["cumulative_rewards"][-1] < reward_min:
-            #print(i,end=",")
-            reward_min = episode_data["cumulative_rewards"][-1]
-            reward_min_idx = i
-            pass
-    print()
+    #     if reward_min is None:
+    #         reward_min = episode_data["cumulative_rewards"][-1]
+    #         reward_min_idx = i
+    #     if episode_data["cumulative_rewards"][-1] < reward_min:
+    #         #print(i,end=",")
+    #         reward_min = episode_data["cumulative_rewards"][-1]
+    #         reward_min_idx = i
+    #         pass
+    # print()
     return data
 
 
@@ -542,7 +542,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
     t_end = time.time()
 
     print()
