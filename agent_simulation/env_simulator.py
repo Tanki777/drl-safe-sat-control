@@ -74,9 +74,6 @@ def start_simulation(env: BasiliskRWEnv):
     normal_vector_koz_array = env.active_koz_config["normal_vector"]
     half_angle_koz_array = env.active_koz_config["half_angle_rad"]
 
-    print(f"DEBUG: START")
-    print(normal_vector_koz_array)
-
     done = False
     while not done:
         action = action_schedule(env.steps * env.dt)
@@ -237,7 +234,6 @@ def plot_actual_attitude(simulation_data: dict):
         circle_points_array = _generate_keep_out_zone_circles()
         circle_points_array = np.array(circle_points_array)
 
-        print(f"DEBUG: LEN {len(normal_vector_koz_array)}")
         ax1.plot(circle_points_array[0][:, 0], circle_points_array[0][:, 1], circle_points_array[0][:, 2], "orange", linewidth=2, label="Keep Out Zone 1")
         ax1.plot(circle_points_array[1][:, 0], circle_points_array[1][:, 1], circle_points_array[1][:, 2], "red", linewidth=2, label="Keep Out Zone 2") if len(normal_vector_koz_array) > 1 else None
         ax1.plot(circle_points_array[2][:, 0], circle_points_array[2][:, 1], circle_points_array[2][:, 2], "purple", linewidth=2, label="Keep Out Zone 3") if len(normal_vector_koz_array) > 2 else None
