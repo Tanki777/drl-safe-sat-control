@@ -119,7 +119,9 @@ def plot_actual_attitude(simulation_data: dict):
     norm_q = simulation_data["quaternion_norm"]
     torques_array = simulation_data["torques"]
     rewards_array = simulation_data["rewards"]
+    rewards_discounted_array = simulation_data["rewards_discounted"]
     cumulative_rewards = simulation_data["cumulative_rewards"]
+    cumulative_rewards_discounted = simulation_data["cumulative_rewards_discounted"]
     times = simulation_data["times"]
     normal_vector_koz_array = simulation_data["normal_vector_koz_array"] # normal vector in world frame
     half_angle_koz_array = simulation_data["half_angle_koz_array"]
@@ -256,8 +258,8 @@ def plot_actual_attitude(simulation_data: dict):
     
     # Cumulative Reward vs Time
     ax3 = fig.add_subplot(343)  # New subplot for cumulative reward
-    ax3.plot(times[:len(cumulative_rewards)], cumulative_rewards, "orange", linewidth=3, label="Cumulative Reward")
-    ax3.plot(times[:len(rewards_array)], rewards_array, "lightcoral", alpha=0.6, linewidth=1, label="Step Reward")
+    ax3.plot(times[:len(cumulative_rewards)], cumulative_rewards, "orange", linewidth=2, label="Cumulative Reward")
+    ax3.plot(times[:len(cumulative_rewards_discounted)], cumulative_rewards_discounted, "green", linewidth=1, label="Cumulative Reward Discounted")
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Reward")
     ax3.set_title("Reward Evolution")

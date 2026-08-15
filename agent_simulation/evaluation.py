@@ -114,6 +114,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     min_margin_koz = 0
     cnt_Koz_violations = 0
     zones_mask = eval_env.get_original_obs()["zones_mask"][0]
+    gamma = model.gamma
 
     # Get LSTM
     policy = getattr(model, "policy") 
@@ -158,9 +159,14 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     lstm_output_array = np.array(lstm_output)
     torques_array = np.array(torques) * scale_torque
     rewards_array = np.array(rewards)
+    rewards_discounted_array = np.zeros_like(rewards_array)
+
+    for idx, r in enumerate(rewards_array):
+        rewards_discounted_array[idx] = rewards_array[idx] * gamma**idx
 
     # Calculate cumulative reward
     cumulative_rewards = np.cumsum(rewards_array)
+    cumulative_rewards_discounted = np.cumsum(rewards_discounted_array)
 
     # store the norm of quaternions
     norm_q = np.linalg.norm(states_array[:, :4], axis=1)
@@ -172,7 +178,9 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         "omega": states_array[:, 4:7],
         "omega_wheels": states_array[:, 7:10],
         "rewards": rewards_array,
+        "rewards_discounted": rewards_discounted_array,
         "cumulative_rewards": cumulative_rewards,
+        "cumulative_rewards_discounted": cumulative_rewards_discounted,
         "times": times,
         "normal_vector_koz_array": normal_vector_koz_array,
         "half_angle_koz_array": half_angle_koz_array,
@@ -542,7 +550,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
     t_end = time.time()
 
     print()
