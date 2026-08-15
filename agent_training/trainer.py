@@ -68,8 +68,14 @@ class CustomCallback(BaseCallback):
             "max_torque": [],
             "settled": [],
             "min_margin_koz": [],
-            "entered_koz_count": []
+            "entered_koz_count": [],
+            "ep_rew": [],
+            "ep_rew_discounted": []
         }
+
+        # States for discounted episode reward.
+        self.discounted_episode_rewards = None
+        self.episode_discount_factors = None
 
     def _log_network_lstm(self, lstm: LSTM, network_name: str):
         """
@@ -152,6 +158,12 @@ class CustomCallback(BaseCallback):
            
 
     def _on_training_start(self):
+        num_envs = self.training_env.num_envs
+
+        # Initialize states for discounted episode rewards.
+        self.discounted_episode_rewards = [0.0] * num_envs
+        self.episode_discount_factors = [1.0] * num_envs
+
         # Define the metrics that will appear in the HPARAMS Tensorboard tab by referencing their key
         hparam_dict = {
                 "algorithm": self.model.__class__.__name__,
@@ -171,10 +183,16 @@ class CustomCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
+        rewards = self.locals.get("rewards", [])
         is_end_of_episode = False
             
         # Collect custom metrics from episode endings
-        for info in infos:
+        for env_idx, info in enumerate(infos):
+
+            # Accumulate the discounted return separately for every env.
+            self.discounted_episode_rewards[env_idx] += self.episode_discount_factors[env_idx] * float(rewards[env_idx])
+            self.episode_discount_factors[env_idx] *= self.model.gamma
+
             if isinstance(info, dict):
                 # Check if this info contains custom metrics (episode ended)
                 has_custom_metrics = any(key.startswith("custom_metrics/") for key in info.keys())
@@ -182,6 +200,15 @@ class CustomCallback(BaseCallback):
                 if has_custom_metrics:
                     is_end_of_episode = True
 
+                    # Episode reward.
+                    self.custom_metrics["ep_rew"].append(float(info["episode"]["r"]))
+
+                    # Discounted episode reward.
+                    self.custom_metrics["ep_rew_discounted"].append(self.discounted_episode_rewards[env_idx])
+                    self.discounted_episode_rewards[env_idx] = 0.0 # Reset
+                    self.episode_discount_factors[env_idx] = 1.0 # Reset
+
+                    # Other metrics.
                     for metric_name in self.custom_metrics.keys():
                         metric_key = f"custom_metrics/{metric_name}"
 
