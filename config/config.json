@@ -1,40 +1,46 @@
 {
     "general": {
-        "DEVICE": "cpu"
+        "DEVICE": "cpu",
+        "GAMMA": 0.99,
+        "LEARNING_RATE": 0.0001,
+        "BUFFER_SIZE": 1000000,
+        "LEARNING_STARTS": 10000,
+        "BATCH_SIZE": 256,
+        "GRADIENT_STEPS": 1
     },
 
     "training": {
-        "MODEL_NAME": "rewMod22_ph1_schedPh1v3_cont",
-        "SCHEDULE_FILE_NAME": "ph1v3.json",
-        "CONTINUE_TRAINING": true
+        "MODEL_NAME": "rewMod224c1_fast_ph1_schedPh1v5ep100",
+        "SCHEDULE_FILE_NAME": "ph1v5ep100.json",
+        "CONTINUE_TRAINING": false
     },
 
     "evaluation": {
-        "MODEL_NAME": "rewMod22_ph1_schedPh1v2",
-        "PHASE_TYPE": "phase 1",
-        "TIMESTEP": 3500000,
+        "MODEL_NAME": "rewMod224ph2a_schedFullv1_fixedKozNorm",
+        "PHASE_TYPE": "phase 2",
+        "TIMESTEP": 10800000,
         "MAX_STEPS": 3000,
         "MIN_INITIAL_ERROR_ANGLE": 90.0,
         "MAX_INITIAL_ERROR_ANGLE": 180.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 15.0,
-        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_HALF_ANGLE_KOZ": 5.0,
+        "MAX_HALF_ANGLE_KOZ": 15.0,
         "MIN_NR_KOZ": 1,
-        "MAX_NR_KOZ": 1
+        "MAX_NR_KOZ": 3
     },
 
     "visualization": {
-        "MODEL_NAME": "rewMod22_ph1_schedPh1v2",
-        "TIMESTEP": 3500000,
+        "MODEL_NAME": "rewMod224c1_fast_ph1_schedPh1v5ep100",
         "PHASE_TYPE": "phase 1",
-        "MAX_STEPS": 3000,
-        "MIN_INITIAL_ERROR_ANGLE": 90.0,
-        "MAX_INITIAL_ERROR_ANGLE": 180.0,
+        "TIMESTEP": 4500000,
+        "MAX_STEPS": 1000,
+        "MIN_INITIAL_ERROR_ANGLE": 170.0,
+        "MAX_INITIAL_ERROR_ANGLE": 171.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 15.0,
-        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_HALF_ANGLE_KOZ": 0.0,
+        "MAX_HALF_ANGLE_KOZ": 0.0,
         "MIN_NR_KOZ": 0,
         "MAX_NR_KOZ": 0,
         "CREATE_VIDEO": false,

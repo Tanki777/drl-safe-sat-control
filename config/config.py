@@ -19,6 +19,12 @@ class Config():
 
     class General():
         DEVICE = config_data["general"]["DEVICE"]
+        GAMMA = config_data["general"]["GAMMA"]
+        LEARNING_RATE = config_data["general"]["LEARNING_RATE"]
+        BUFFER_SIZE = config_data["general"]["BUFFER_SIZE"]
+        LEARNING_STARTS = config_data["general"]["LEARNING_STARTS"]
+        BATCH_SIZE = config_data["general"]["BATCH_SIZE"]
+        GRADIENT_STEPS = config_data["general"]["GRADIENT_STEPS"]
 
     class Training():
         SCHEDULE_FILE_NAME = config_data["training"]["SCHEDULE_FILE_NAME"]
