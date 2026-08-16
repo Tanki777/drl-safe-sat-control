@@ -52,11 +52,12 @@ class CustomCallback(BaseCallback):
     Custom callback for logging additional metrics to TensorBoard and saving the model at regular intervals.
     Logs custom metrics from the environment info dict at the end of each rollout and saves the model every `save_interval` timesteps. Also logs hyperparameters at the start of training.
     """
-    def __init__(self, check_freq, save_interval, model_name, verbose=1):
+    def __init__(self, check_freq, save_interval, model_name, n_envs, verbose=1):
         super().__init__(verbose)
         self.check_freq = check_freq
         self.save_interval = save_interval
         self.model_name = model_name
+        self.n_envs = n_envs
         
         # Custom metrics accumulators
         self.custom_metrics = {
@@ -76,6 +77,9 @@ class CustomCallback(BaseCallback):
         # States for discounted episode reward.
         self.discounted_episode_rewards = None
         self.episode_discount_factors = None
+
+        # Track how many episodes to collect for logging
+        self.n_env_collected = 0
 
     def _log_network_lstm(self, lstm: LSTM, network_name: str):
         """
@@ -184,7 +188,7 @@ class CustomCallback(BaseCallback):
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
         rewards = self.locals.get("rewards", [])
-        is_end_of_episode = False
+        dones = self.locals.get("dones", [])
             
         # Collect custom metrics from episode endings
         for env_idx, info in enumerate(infos):
@@ -193,31 +197,36 @@ class CustomCallback(BaseCallback):
             self.discounted_episode_rewards[env_idx] += self.episode_discount_factors[env_idx] * float(rewards[env_idx])
             self.episode_discount_factors[env_idx] *= self.model.gamma
 
-            if isinstance(info, dict):
-                # Check if this info contains custom metrics (episode ended)
-                has_custom_metrics = any(key.startswith("custom_metrics/") for key in info.keys())
+            # If current episode did not end yet, continue.
+            if not bool(dones[env_idx]):
+                continue
 
-                if has_custom_metrics:
-                    is_end_of_episode = True
+            # Otherwise, accumulate metrics.
+            episode_info = info.get("episode")
+            if episode_info is not None:
+                episode_reward = episode_info.get("r")
+                if episode_reward is not None:
+                    self.custom_metrics["ep_rew"].append(float(episode_reward))
 
-                    # Episode reward.
-                    self.custom_metrics["ep_rew"].append(float(info["episode"]["r"]))
+            # Discounted episode reward.
+            self.custom_metrics["ep_rew_discounted"].append(self.discounted_episode_rewards[env_idx])
+            self.discounted_episode_rewards[env_idx] = 0.0 # Reset
+            self.episode_discount_factors[env_idx] = 1.0 # Reset
 
-                    # Discounted episode reward.
-                    self.custom_metrics["ep_rew_discounted"].append(self.discounted_episode_rewards[env_idx])
-                    self.discounted_episode_rewards[env_idx] = 0.0 # Reset
-                    self.episode_discount_factors[env_idx] = 1.0 # Reset
+            # Other metrics.
+            for metric_name in self.custom_metrics.keys():
+                metric_key = f"custom_metrics/{metric_name}"
 
-                    # Other metrics.
-                    for metric_name in self.custom_metrics.keys():
-                        metric_key = f"custom_metrics/{metric_name}"
+                if metric_key in info:
+                    self.custom_metrics[metric_name].append(info[metric_key])
 
-                        if metric_key in info:
-                            self.custom_metrics[metric_name].append(info[metric_key])
+            # Increment tracking counter
+            self.n_env_collected += 1
                   
-        if is_end_of_episode:
+        if self.n_env_collected >= self.n_envs:
             self._log_custom_metrics()
             self._log_lstm_parameters()
+            self.n_env_collected = 0
 
         # Save model every save_interval total timesteps
         if self.num_timesteps % self.save_interval == 0:
@@ -233,7 +242,7 @@ class CustomCallback(BaseCallback):
             if values:  # Only log if we have data
                 if metric_name == "settling_time":
                     # For settling_time, ignore non settled case when calculating mean
-                    non_none_values = [v for v in values if v]
+                    non_none_values = [v for v in values if v is not None]
                     if non_none_values:
                         mean_value = sum(non_none_values) / len(non_none_values)
                     else:
@@ -364,10 +373,10 @@ def create_environment(model_name, initial_state=None, phase_name=None, phase_ty
 
     if initial_state is not None:
         # Need to use a lambda to pass initial_state parameter
-        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state, phase_type=phase_type), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state, phase_type=phase_type, discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
 
     else:
-        env = make_vec_env(sat_env.BasiliskRWEnv(phase_type=phase_type), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+        env = make_vec_env(sat_env.BasiliskRWEnv(phase_type=phase_type, discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
 
     return env
 
@@ -477,7 +486,9 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             )
         )
 
-        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, learning_rate=1e-4, buffer_size=1_000_000, learning_starts=10_000, batch_size=256, gradient_steps=-1,verbose=1, device=Config.General.DEVICE,
+        model = SAC("MultiInputPolicy", env, policy_kwargs=policy_kwargs, gamma=Config.General.GAMMA, learning_rate=Config.General.LEARNING_RATE,
+                    buffer_size=Config.General.BUFFER_SIZE, learning_starts=Config.General.LEARNING_STARTS, batch_size=Config.General.BATCH_SIZE,
+                    gradient_steps=Config.General.GRADIENT_STEPS,verbose=1, device=Config.General.DEVICE,
                     tensorboard_log=log_path, seed=None, ent_coef='auto')  # Use absolute path for consistency
         
     return model, save_path, latest_model_path
@@ -495,7 +506,7 @@ def train_agent(model, total_timesteps, check_freq, save_interval, model_name):
     Returns:
         model: The trained SAC model
     """
-    custom_callback = CustomCallback(check_freq=check_freq, save_interval=save_interval, model_name=model_name)
+    custom_callback = CustomCallback(check_freq=check_freq, save_interval=save_interval, model_name=model_name, n_envs=model.n_envs)
 
     print("|")
     print(f"|---{YELLOW_START}Start training the agent...{COLOR_END}")
