@@ -262,7 +262,7 @@ def build_basilisk_sim(omega_wheel_init, satellite, dt) -> tuple[SimulationBaseC
 
 
 @njit
-def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed):
+def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed, termination, discount_factor):
     q0_current = state[0]
     ang_vel_sat_x = state[4]
     ang_vel_sat_y = state[5]
@@ -278,8 +278,8 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
-    q0_current = min(max(q0_current, -1.0), 1.0)
-    q0_prev = min(max(q0_prev, -1.0), 1.0)
+    q0_current = min(max(abs(q0_current), -1.0), 1.0)
+    q0_prev = min(max(abs(q0_prev), -1.0), 1.0)
     
     err_phi_current = 2 * math.acos(q0_current)   # in [rad]
     err_phi_prev = 2 * math.acos(q0_prev)   # in [rad]
@@ -292,7 +292,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
 
     r_total = 0
-    USE_REWARD = "mod224ph2a"
+    USE_REWARD = "mod224c"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -330,7 +330,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r_total = r_err + r_torque + r_acc + r_direction
 
     if USE_REWARD == "yangMod1":
-        r_err = np.exp(-err_phi_current/(0.14*360))
+        r_err = np.exp(-err_phi_current/(0.14*360.0))
         #r_torque = -0.05 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)/scale_torque_norm_yang - 0.005 * (np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2))
         r_acc = 0
         if err_phi_current < 0.25:
@@ -994,6 +994,45 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
 
         
         r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224c":
+        """
+        Goal: optimize
+        Result: 
+        Note: 
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = 0.1 * err_phi_delta
+           
+        # Phase 2
+        else:      
+            pass
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            if err_phi_current < 0.25:
+                r2 = 1.0
+            
+        elif phase == "phase 2":
+            pass
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r5
 
     if USE_REWARD == "mod224ph2a":
         """
@@ -2111,6 +2150,29 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
 
         r_total = r1 + r2 + r4 + r5
 
+    if USE_REWARD == "mod41":
+
+        # Reward for reducing attitude error
+        r1 = min(max(0.1 * err_phi_delta,-0.02), 0.02) # [-0.02, 0.02]
+
+        # Pointing accuracy
+        r2 = - (err_phi_current / 180.0 + min(err_phi_current / 5.0, 1.0)**2) # [-2, 0]
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            r5 = - min(max((0.17 - koz_margin_min) / 0.17, 0.0), 1.0)**2 # [-1, 0]
+      
+        r_total = r1 + 0.01*r2 + 0.01*r5
+
+        # Termination reward for entering KOZ
+        if termination == "failure":
+            r_total = -250.0
+
+        # Termination reward for settling for a certain duration.
+        elif termination == "success":
+            r_total = 150.0
+
     return r_total
 
 
@@ -2121,7 +2183,7 @@ class BasiliskRWEnv(gym.Env):
         "render_fps": 30,
     }
 
-    def __init__(self, render_mode=None, initial_state=None, phase_type=None):
+    def __init__(self, render_mode=None, initial_state=None, phase_type=None, discount_factor=0.99):
         super(BasiliskRWEnv).__init__()
 
         self.episode_count = 0
@@ -2192,6 +2254,7 @@ class BasiliskRWEnv(gym.Env):
             self.max_nr_koz = initial_state[8]
 
         self.PHASE = phase_type
+        self.discount_factor = discount_factor # gamma
 
         # Custom metrics tracking for TensorBoard
         self.initial_error_angle = 0.0
@@ -2201,6 +2264,7 @@ class BasiliskRWEnv(gym.Env):
         self.settled = False
         self.settling_time = None  # means not settled
         self.settling_threshold_deg = 0.25  # degrees for considering "settled"
+        self.consecutive_settled_steps = 0
 
         self.x_axis = np.array([1, 0, 0], dtype=np.float64) # Boresight vector (body frame)
 
@@ -2377,7 +2441,6 @@ class BasiliskRWEnv(gym.Env):
         }
 
         return state
-        
 
     def _apply_action(self, action):
         wheel_motor_torque = (
@@ -2389,7 +2452,17 @@ class BasiliskRWEnv(gym.Env):
 
         self.rw_cmd_msg.write(cmd_payload, self.sim.TotalSim.CurrentNanos)
 
-    
+    def _determine_termination(self) -> str:
+        # Failure on entering KOZ.
+        if self.entered_koz_count > 0:
+            return "failure"
+
+        # Success on being settled for 10 seconds.
+        elif self.consecutive_settled_steps >= (10.0/Constants.TIME_DELTA):
+            return "success"
+
+        else:
+            return ""
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -2444,6 +2517,7 @@ class BasiliskRWEnv(gym.Env):
         self.episode_torques_prev = []
         self.settled = False
         self.settling_time = None
+        self.consecutive_settled_steps = 0
         self.min_margin_koz = np.pi
         self.entered_koz_count = 0
 
@@ -2494,8 +2568,6 @@ class BasiliskRWEnv(gym.Env):
         self.sim.ExecuteSimulation()
 
         self.state = self._get_state()
-        
-        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt)
 
         # Update KOZ metrics
         if self.current_nr_koz > 0:
@@ -2522,6 +2594,9 @@ class BasiliskRWEnv(gym.Env):
         current_error_deg = 2 * math.acos(min(max(abs(self.state["satellite"][0]), 0.0), 1.0)) * 180 / np.pi
         is_within_accuracy = True if current_error_deg <= self.settling_threshold_deg else False
 
+        # Save previous settled state.
+        settled_prev = self.settled
+
         # From unsettled to settled
         if not self.settled and is_within_accuracy:
             self.settled = True
@@ -2531,16 +2606,28 @@ class BasiliskRWEnv(gym.Env):
         elif self.settled and not is_within_accuracy:
             self.settled = False
             self.settling_time = None
+            self.consecutive_settled_steps = 0
 
-        self.torque_prev = action * Constants.TORQUE_WHEEL_MAX  # Update previous torque for the next step
+        # If it remained settled, increment counter.
+        if settled_prev and self.settled:
+            self.consecutive_settled_steps += 1
+
+        #termination = self._determine_termination()
+        termination = "" # Never terminate early
+
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt, termination, self.discount_factor)
+
+        # Update previous torque for the next step
+        self.torque_prev = action * Constants.TORQUE_WHEEL_MAX  
 
         self.steps += 1
-        truncated = False
-        terminated = self.steps >= self.max_steps
+
+        terminated = termination == "failure" or termination == "success"
+        truncated = not terminated and self.steps >= self.max_steps
 
         info = {}
 
-        if terminated:
+        if terminated or truncated:
             final_error_angle = current_error_deg
             avg_torque = np.mean(self.episode_torques) if self.episode_torques else 0.0
             max_torque = np.max(self.episode_torques) if self.episode_torques else 0.0
@@ -2548,6 +2635,8 @@ class BasiliskRWEnv(gym.Env):
             min_margin_koz = self.min_margin_koz * 180 / np.pi  # convert to degrees
             
             info.update({
+                "termination": termination,
+                "truncated": truncated,
                 "custom_metrics/initial_error_angle": self.initial_error_angle,
                 "custom_metrics/initial_angular_velocity": self.initial_angular_velocity_mag,
                 "custom_metrics/final_error_angle": final_error_angle,
