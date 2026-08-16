@@ -99,12 +99,11 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         simulation_data: A dictionary containing the simulation data for plotting.
     """
     # Arrays for storing data
-    times = np.linspace(0, max_steps/10, max_steps)  # Assuming dt=0.1s
     states = []
     states_koz = []
     lstm_output = []
     torques = []
-    rewards = []
+    rewards_arr = []
     frames = []
 
     obs = eval_env.reset()
@@ -123,27 +122,27 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     # Simulation loop
     while not done:
-        # Need to fetch env attributes BEFORE step(), otherwise if done=true --> after step() env resets and attributes are reinitialized!
-        min_margin_koz = eval_env.get_attr("min_margin_koz")[0]
-        cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
-
         action, _states = model.predict(obs, deterministic=True)
         states.append(eval_env.get_original_obs()["satellite"][0])
         states_koz.append(eval_env.get_original_obs()["zones"][0])
         lstm_output.append(features_extractor_actor.lstm_out.tolist())
 
         # Step the environment
-        obs, reward, done, info = eval_env.step(action)
+        obs, rewards, dones, infos = eval_env.step(action)
+        done = bool(dones[0])
+        info = infos[0]
 
         torques.append(action[0].copy())
-        rewards.append(reward[0])
+        rewards_arr.append(rewards[0])
+
+        if done:
+            min_margin_koz = info["custom_metrics/min_margin_koz"]
+            cnt_Koz_violations = info["custom_metrics/entered_koz_count"]
         
         # Render the environment and store the frame for video
         if create_video:
             frame = eval_env.render()
             frames.append(frame)
-
-    eval_env.close()
 
     # Save as MP4
     timestamp = time.time()
@@ -158,7 +157,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     states_koz_array = np.array(states_koz)
     lstm_output_array = np.array(lstm_output)
     torques_array = np.array(torques) * scale_torque
-    rewards_array = np.array(rewards)
+    rewards_array = np.array(rewards_arr)
     rewards_discounted_array = np.zeros_like(rewards_array)
 
     for idx, r in enumerate(rewards_array):
@@ -170,6 +169,9 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
 
     # store the norm of quaternions
     norm_q = np.linalg.norm(states_array[:, :4], axis=1)
+
+    # Store time array in seconds for plotting.
+    times = np.arange(len(rewards_array)) * Constants.TIME_DELTA
 
     simulation_data = {
         "quaternion": states_array[:, :4],
