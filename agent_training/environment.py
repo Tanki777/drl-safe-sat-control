@@ -292,7 +292,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
 
     r_total = 0
-    USE_REWARD = "mod224c"
+    USE_REWARD = "mod224c1"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -1021,6 +1021,46 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             
         elif phase == "phase 2":
             if err_phi_current < 0.25:
+                r2 = 1.0
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r5
+
+    if USE_REWARD == "mod224c1":
+        """
+        Goal: optimize
+        Result: 
+        Note: 
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = 0.1 * err_phi_delta
+            
+        # Phase 2
+        else:      
+            r1 = 0.1 * err_phi_delta
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            if err_phi_current < 0.25:
+                r2 = 1.0
+            
+        elif phase == "phase 2":
+            if err_phi_current < 0.25 and koz_violation_cnt == 0:
                 r2 = 1.0
 
         # Penalty for entering / being close to keep out zone
