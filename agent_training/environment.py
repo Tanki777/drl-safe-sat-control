@@ -1010,7 +1010,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
            
         # Phase 2
         else:      
-            pass
+            r1 = 0.1 * err_phi_delta
 
         # Bonus for high accuracy
         r2 = 0.0
@@ -1020,7 +1020,8 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
                 r2 = 1.0
             
         elif phase == "phase 2":
-            pass
+            if err_phi_current < 0.25:
+                r2 = 1.0
 
         # Penalty for entering / being close to keep out zone
         r5 = 0.0
