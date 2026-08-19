@@ -45,21 +45,9 @@ class EpisodePlaybackController:
     Controls the replay of one loaded episode.
     """
 
-    def __init__(self, server: viser.ViserServer, episode_data: dict, sat_frame_handle: viser.FrameHandle) -> None:
+    def __init__(self, server: viser.ViserServer) -> None:
         self.server = server
-        self.sat_frame_handle = sat_frame_handle
-
-        self.times = episode_data["times"]
-        self.quaternions = episode_data["quaternion"]
-        self.num_frames = len(self.times)
-
-        # Precompute the boresight direction in world frame for all frames for trajectory.
-        body_boresight = np.array([1.0, 0.0, 0.0])
-
-        self.trajectory_points = np.asarray(
-            [rotate_vector_by_quaternion(body_boresight,quaternion) for quaternion in self.quaternions],
-            dtype=np.float64
-        )
+        
 
         self._last_frame = -1
 
@@ -74,11 +62,11 @@ class EpisodePlaybackController:
 
         self.client: viser.ClientHandle = None
         
-        self._create_dynamic_objects()
+        #self._create_dynamic_objects()
         self._create_gui()
         self._register_callbacks()
 
-        self.set_frame(0)
+        #self.set_frame(0)
 
     def _get_episode_selection_options(self, evaluation_file_name: str) -> list:
         file_path = os.path.join(eval_data_dir, evaluation_file_name)
@@ -91,7 +79,29 @@ class EpisodePlaybackController:
 
         return options
 
-    def _create_dynamic_objects(self) -> None:
+    def _create_scene_objects(self) -> None:
+        koz_cnt = len(self.episode_data["normal_vector_koz_array"])
+    
+        for koz_idx in range(koz_cnt):
+            add_koz(self.server, f"KOZ {koz_idx+1}", self.episode_data["normal_vector_koz_array"][koz_idx], self.episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
+    
+        add_target(self.server)
+        #add_unit_sphere(server)
+        self.sat_frame_handle = add_satellite(self.server, self.episode_data["quaternion"][0])
+        
+        self.times = self.episode_data["times"]
+        self.quaternions = self.episode_data["quaternion"]
+        self.num_frames = len(self.times)
+
+        # Precompute the boresight direction in world frame for all frames for trajectory.
+        body_boresight = np.array([1.0, 0.0, 0.0])
+
+        self.trajectory_points = np.asarray(
+            [rotate_vector_by_quaternion(body_boresight,quaternion) for quaternion in self.quaternions],
+            dtype=np.float64
+        )
+        ##########
+
         initial_boresight = self.trajectory_points[0]
 
         # Viser expects line segments with shape (N, 2, 3).
@@ -103,6 +113,13 @@ class EpisodePlaybackController:
             colors=Colors.GOLD,
             line_width=3.0
         )
+
+    def _load_episode(self, file_name: str, episode_nr: str) -> None:
+        episodes = load_evaluation_data(file_name)
+        self.episode_data = episodes[int(episode_nr)] # Need to cast as GUI dropdown value is string.
+
+        self._create_scene_objects()
+        self.set_frame(0)
 
     def _create_gui(self) -> None:
 
@@ -140,7 +157,7 @@ class EpisodePlaybackController:
             self.gui_playing = self.server.gui.add_checkbox("Playing", initial_value=False)
 
             # Add a slider for timestep
-            self.gui_timestep = self.server.gui.add_slider("Timestep", min=0, max=self.num_frames-1, step=1, initial_value=0)
+            self.gui_timestep = self.server.gui.add_slider("Timestep", min=0, max=2999, step=1, initial_value=0) # Dummy max value on init
 
             # Add a button to go to previous frame.
             self.gui_previous = self.server.gui.add_button("Previous frame")
@@ -193,6 +210,12 @@ class EpisodePlaybackController:
 
             new_value = self.gui_evaluation_file.value
             self.gui_selected_episode.options = self._get_episode_selection_options(new_value)
+
+        # On clicking load episode button, load episode
+        @self.gui_load_episode.on_click
+        def _(_) -> None:
+            # TODO: dont load if same episode as before
+            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
 
         # On updating the timestep, set new frame.
         @self.gui_timestep.on_update
@@ -663,22 +686,24 @@ def start_server():
     print("|-----Access Viser at: http://localhost:8080")
     print("|-----Press Ctrl+C to stop the server")
 
-    # Load episode data
-    episodes = load_evaluation_data("rewMod22_ph1_schedPh1v2_3500000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 3]_ep[100]_2026-08-12-20-08-44.npz")
-    episode_data = episodes[5] # First episode
-    koz_cnt = len(episode_data["normal_vector_koz_array"])
+    # # Load episode data
+    # episodes = load_evaluation_data("rewMod22_ph1_schedPh1v2_3500000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 3]_ep[100]_2026-08-12-20-08-44.npz")
+    # episode_data = episodes[5] # First episode
+    # koz_cnt = len(episode_data["normal_vector_koz_array"])
+
+    
+
+    # for koz_idx in range(koz_cnt):
+    #     add_koz(server, f"KOZ {koz_idx+1}", episode_data["normal_vector_koz_array"][koz_idx], episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
+
+    # add_target(server)
+    # #add_unit_sphere(server)
+    # sat_frame_handle = add_satellite(server, episode_data["quaternion"][0])
 
     # Init theme
     server.gui.configure_theme(show_logo=False, dark_mode=True)
 
-    for koz_idx in range(koz_cnt):
-        add_koz(server, f"KOZ {koz_idx+1}", episode_data["normal_vector_koz_array"][koz_idx], episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
-
-    add_target(server)
-    #add_unit_sphere(server)
-    sat_frame_handle = add_satellite(server, episode_data["quaternion"][0])
-
-    playback = EpisodePlaybackController(server, episode_data, sat_frame_handle)
+    playback = EpisodePlaybackController(server)
 
     playback.run()
 
