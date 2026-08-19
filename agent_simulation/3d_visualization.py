@@ -119,7 +119,7 @@ class EpisodePlaybackController:
 
         self._enable_playback_gui()
 
-        self.set_frame(0)
+        self._reset_episode()
 
     def _enable_playback_gui(self) -> None:
         # Playback
@@ -141,6 +141,11 @@ class EpisodePlaybackController:
         # Command
         self.command_play_pause.disabled = False
 
+    def _reset_episode(self) -> None:
+  
+        self.gui_playing.value = False
+        self.gui_timestep.value = 0
+        self.set_frame(0)
 
     def _create_gui(self) -> None:
 
@@ -211,7 +216,7 @@ class EpisodePlaybackController:
             self.gui_show_trajectory = self.server.gui.add_checkbox("Show trajectory", initial_value=True, disabled=True)
 
             # Add checkbox to toggle entire episode trajectory.
-            self.gui_show_full_trajectory = self.server.gui.add_checkbox("Show complete trajectory", initial_value=False, disabled=True)
+            self.gui_show_full_trajectory = self.server.gui.add_checkbox("Show complete trajectory", initial_value=True, disabled=True)
 
         # Add a GUI folder for camera settings.
         with self.server.gui.add_folder("Camera"):
@@ -260,8 +265,7 @@ class EpisodePlaybackController:
         # On clicking frame reset button, update frame.
         @self.gui_reset.on_click
         def _(_) -> None:
-            self.gui_playing.value = False
-            self.gui_timestep.value = 0
+            self._reset_episode()
 
         # On updating show trajectory checkbox, update its visibility.
         @self.gui_show_trajectory.on_update
@@ -312,7 +316,7 @@ class EpisodePlaybackController:
         """
         Updates trajectory path per frame.
         """
-
+        
         # If selected to show entire episode trajectory, show all trajectory points.
         if self.gui_show_full_trajectory.value:
             points = self.trajectory_points
@@ -345,9 +349,6 @@ class EpisodePlaybackController:
         """
 
         frame_index = int(np.clip(frame_index, 0, self.num_frames - 1))
-
-        if frame_index == self._last_frame:
-            return
 
         quaternion = self.quaternions[frame_index]
 
