@@ -62,11 +62,8 @@ class EpisodePlaybackController:
 
         self.client: viser.ClientHandle = None
         
-        #self._create_dynamic_objects()
         self._create_gui()
         self._register_callbacks()
-
-        #self.set_frame(0)
 
     def _get_episode_selection_options(self, evaluation_file_name: str) -> list:
         file_path = os.path.join(eval_data_dir, evaluation_file_name)
@@ -86,7 +83,6 @@ class EpisodePlaybackController:
             add_koz(self.server, f"KOZ {koz_idx+1}", self.episode_data["normal_vector_koz_array"][koz_idx], self.episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
     
         add_target(self.server)
-        #add_unit_sphere(server)
         self.sat_frame_handle = add_satellite(self.server, self.episode_data["quaternion"][0])
         
         self.times = self.episode_data["times"]
@@ -95,12 +91,10 @@ class EpisodePlaybackController:
 
         # Precompute the boresight direction in world frame for all frames for trajectory.
         body_boresight = np.array([1.0, 0.0, 0.0])
-
         self.trajectory_points = np.asarray(
             [rotate_vector_by_quaternion(body_boresight,quaternion) for quaternion in self.quaternions],
             dtype=np.float64
         )
-        ##########
 
         initial_boresight = self.trajectory_points[0]
 
@@ -119,7 +113,34 @@ class EpisodePlaybackController:
         self.episode_data = episodes[int(episode_nr)] # Need to cast as GUI dropdown value is string.
 
         self._create_scene_objects()
+
+        # Set GUI timestep slider max value to correct value
+        self.gui_timestep.max = self.num_frames - 1
+
+        self._enable_playback_gui()
+
         self.set_frame(0)
+
+    def _enable_playback_gui(self) -> None:
+        # Playback
+        self.gui_playing.disabled = False
+        self.gui_timestep.disabled = False
+        self.gui_previous.disabled = False
+        self.gui_next.disabled = False
+        self.gui_reset.disabled = False
+        self.gui_speed.disabled = False
+        self.gui_loop.disabled = False
+
+        # Display
+        self.gui_show_trajectory.disabled = False
+        self.gui_show_full_trajectory.disabled = False
+
+        # Camera
+        self.gui_camera_perspective.disabled = False
+
+        # Command
+        self.command_play_pause.disabled = False
+
 
     def _create_gui(self) -> None:
 
@@ -130,49 +151,49 @@ class EpisodePlaybackController:
         with self.server.gui.add_folder("Episode Selection"):
             # If evaluation files exist, load them.
             if os.listdir(eval_data_dir):
-                # Add a dropdown menu to list all evaluation files.
-                self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=os.listdir(eval_data_dir), initial_value=os.listdir(eval_data_dir)[0])
-
-                # Add a dropdown menu to select the episode among the episodes of the selected file.
-                
-
-                self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=self._get_episode_selection_options(os.listdir(eval_data_dir)[0]))
+                file_options = os.listdir(eval_data_dir)
+                episode_options = self._get_episode_selection_options(os.listdir(eval_data_dir)[0])
+                disabled = False
 
             # Otherwise, show warning.
             else:
-                # Add a dropdown menu to list all evaluation files. For some reason it is bugged if not using the extra comma here...
-                self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=("Could not find evaluation_data folder",), disabled=True)
+                file_options = ("Could not find evaluation_data folder",)
+                episode_options = ("0")
+                disabled = True
 
-                # Add a dropdown menu to select the episode among the episodes of the selected file.
-                self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=("0"), disabled=True)
+            # Add a dropdown menu to list all evaluation files. For some reason it is bugged if not using the extra comma here...
+            self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=file_options, disabled=disabled)
+
+            # Add a dropdown menu to select the episode among the episodes of the selected file.
+            self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=episode_options, disabled=disabled)
 
             # Add a button to load episode
-            self.gui_load_episode = self.server.gui.add_button("Load episode")
+            self.gui_load_episode = self.server.gui.add_button("Load episode", disabled=disabled)
 
             
         # Add a playback GUI folder.
         with self.server.gui.add_folder("Playback"):
 
             # Add a checkbox to toggle playing.
-            self.gui_playing = self.server.gui.add_checkbox("Playing", initial_value=False)
+            self.gui_playing = self.server.gui.add_checkbox("Playing", initial_value=False, disabled=True)
 
             # Add a slider for timestep
-            self.gui_timestep = self.server.gui.add_slider("Timestep", min=0, max=2999, step=1, initial_value=0) # Dummy max value on init
+            self.gui_timestep = self.server.gui.add_slider("Timestep", min=0, max=2999, step=1, initial_value=0, disabled=True) # Dummy max value on init
 
             # Add a button to go to previous frame.
-            self.gui_previous = self.server.gui.add_button("Previous frame")
+            self.gui_previous = self.server.gui.add_button("Previous frame", disabled=True)
 
             # Add a button to go to next frame.
-            self.gui_next = self.server.gui.add_button("Next frame")
+            self.gui_next = self.server.gui.add_button("Next frame", disabled=True)
 
             # Add a button to go to initial frame.
-            self.gui_reset = self.server.gui.add_button("Reset")
+            self.gui_reset = self.server.gui.add_button("Reset", disabled=True)
 
             # Add a dropdown menu for playback speed
-            self.gui_speed = self.server.gui.add_dropdown("Speed", options=("0.25x","0.5x","1x","2x","4x"), initial_value="1x")
+            self.gui_speed = self.server.gui.add_dropdown("Speed", options=("0.25x","0.5x","1x","2x","4x"), initial_value="1x", disabled=True)
 
             # Add a checkbox to toggle playback looping.
-            self.gui_loop = self.server.gui.add_checkbox("Loop", initial_value=True)
+            self.gui_loop = self.server.gui.add_checkbox("Loop", initial_value=True, disabled=True)
 
         # Add a GUI folder for episode state information.
         with self.server.gui.add_folder("Episode state"):
@@ -187,19 +208,19 @@ class EpisodePlaybackController:
         with self.server.gui.add_folder("Display"):
 
             # Add checkbox to toggle trajectory so far.
-            self.gui_show_trajectory = self.server.gui.add_checkbox("Show trajectory", initial_value=True)
+            self.gui_show_trajectory = self.server.gui.add_checkbox("Show trajectory", initial_value=True, disabled=True)
 
             # Add checkbox to toggle entire episode trajectory.
-            self.gui_show_full_trajectory = self.server.gui.add_checkbox("Show complete trajectory", initial_value=False)
+            self.gui_show_full_trajectory = self.server.gui.add_checkbox("Show complete trajectory", initial_value=False, disabled=True)
 
         # Add a GUI folder for camera settings.
         with self.server.gui.add_folder("Camera"):
 
             # Add dropdown menu to select camera perspective.
-            self.gui_camera_perspective = self.server.gui.add_dropdown("Perspective", options=("target","boresight"), initial_value="target")
+            self.gui_camera_perspective = self.server.gui.add_dropdown("Perspective", options=("target","boresight"), initial_value="target", disabled=True)
 
         # Add command to play / pause with spacebar.
-        self.command_play_pause = self.server.gui.add_command(label="Toggle play/pause", hotkey="space")
+        self.command_play_pause = self.server.gui.add_command(label="Toggle play/pause", hotkey="space", disabled=True)
 
     # TODO: add callbacks for episode selection
     def _register_callbacks(self) -> None:
@@ -446,28 +467,6 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
     return satellite_frame
 
 
-def add_unit_sphere(server: viser.ViserServer):
-    """
-    Adds the unit sphere.
-
-    Args:
-        server: Viser server to add objects to scene.
-    """
-
-    return server.scene.add_icosphere(
-        name="/environment/unit_sphere",
-        radius=0.999,
-        subdivisions=20,
-        color=Colors.GRAY,
-        opacity=0.05,
-        material="standard",
-        flat_shading=False,
-        side="double",
-        cast_shadow=False,
-        receive_shadow=False
-    )
-
-
 def create_orthonormal_basis(normal_vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Constructs two unit tangent vectors u and v such that
@@ -685,20 +684,6 @@ def start_server():
 
     print("|-----Access Viser at: http://localhost:8080")
     print("|-----Press Ctrl+C to stop the server")
-
-    # # Load episode data
-    # episodes = load_evaluation_data("rewMod22_ph1_schedPh1v2_3500000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 3]_ep[100]_2026-08-12-20-08-44.npz")
-    # episode_data = episodes[5] # First episode
-    # koz_cnt = len(episode_data["normal_vector_koz_array"])
-
-    
-
-    # for koz_idx in range(koz_cnt):
-    #     add_koz(server, f"KOZ {koz_idx+1}", episode_data["normal_vector_koz_array"][koz_idx], episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
-
-    # add_target(server)
-    # #add_unit_sphere(server)
-    # sat_frame_handle = add_satellite(server, episode_data["quaternion"][0])
 
     # Init theme
     server.gui.configure_theme(show_logo=False, dark_mode=True)
