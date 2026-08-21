@@ -236,7 +236,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
         simulation_data.append(episode_data)
         
         # Add episode results to evaluation lists
-        min_margins_koz.append(episode_data["min_margin_koz"]*180/np.pi)  # in degrees
+        min_margins_koz.append(episode_data["min_margin_koz"])  # in degrees
         cnts_koz_violations.append(episode_data["cnt_Koz_violations"])
         ep_rewards.append(episode_data["cumulative_rewards"][-1]) # episode reward
 
@@ -391,10 +391,10 @@ def calc_metrics(data: list):
             settled_final_err.append(2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi)
             control_effort.append(np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2))
 
-        if episode_data["min_margin_koz"]*180/np.pi < 0.0:
-            koz_margin_violated.append(episode_data["min_margin_koz"]*180/np.pi)
+        if episode_data["min_margin_koz"] < 0.0:
+            koz_margin_violated.append(episode_data["min_margin_koz"])
         else:
-            koz_margin_not_violated.append(episode_data["min_margin_koz"]*180/np.pi)
+            koz_margin_not_violated.append(episode_data["min_margin_koz"])
        
     print()
     print("Episodes: ", len(data))
@@ -445,13 +445,13 @@ def load_evaluation_data(file_name: str):
     #         pass
         
     #     # Off-border: no violation, target reached, large KOZ
-    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi > 10.0 
+    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"] > 10.0 
     #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
     #         #print(i,end=",")
     #         pass
 
     #     # Along-border: no violation, target reached, large KOZ
-    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"]*180/np.pi < 0.5 
+    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"] < 0.5 
     #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
     #         #print(i,end=",")
     #         pass
@@ -552,7 +552,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
     t_end = time.time()
 
     print()

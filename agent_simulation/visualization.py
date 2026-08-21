@@ -132,7 +132,7 @@ def plot_actual_attitude(simulation_data: dict):
     lstm_output = simulation_data["lstm_output"]
 
 
-    print("Minimum margin KOZ:", min_margin_koz*180/np.pi, "degrees")
+    print("Minimum margin KOZ:", min_margin_koz, "degrees")
     print("Count KOZ violations:", cnt_Koz_violations)
     for idx, angle in enumerate(half_angle_koz_array):
         print(f"Half angle KOZ {idx+1}:", angle*180/np.pi, "degrees")
@@ -371,7 +371,7 @@ def plot_for_report(simulation_data: dict, time_end=300):
     min_margin_koz = simulation_data["min_margin_koz"]
     cnt_Koz_violations = simulation_data["cnt_Koz_violations"]
 
-    print("Minimum margin KOZ:", min_margin_koz*180/np.pi, "degrees")
+    print("Minimum margin KOZ:", min_margin_koz, "degrees")
     print("Count KOZ violations:", cnt_Koz_violations)
     print("Half angle KOZ:", half_angle_koz*180/np.pi, "degrees")
     
@@ -618,6 +618,6 @@ if __name__ == "__main__":
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
         loaded contains ALL episodes, therefore in loaded[] should be the index of the episode you want to plot.
     """
-    #loaded = load_evaluation_data("rewMod22_ph1_schedPh1v2_3500000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[100]_2026-07-29-07-18-34.npz")
-    #plot_actual_attitude(loaded[0])
+    #loaded = load_evaluation_data("rewMod224c_ph2_schedPh1to2_7000000_[90.0, 180.0, 0.0, 0.01, 3000, 5.0, 15.0, 1, 1]_ep[100]_2026-08-17-18-30-58.npz")
+    #plot_actual_attitude(loaded[5])
     #plot_for_report(loaded[0],time_end=300)
