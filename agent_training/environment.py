@@ -262,7 +262,7 @@ def build_basilisk_sim(omega_wheel_init, satellite, dt) -> tuple[SimulationBaseC
 
 
 @njit
-def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed, termination, discount_factor):
+def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed, termination, discount_factor, koz_margin_min_prev):
     q0_current = state[0]
     ang_vel_sat_x = state[4]
     ang_vel_sat_y = state[5]
@@ -290,6 +290,8 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     err_phi_delta = err_phi_prev - err_phi_current
 
     ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
+
+    koz_margin_delta = koz_margin_min_prev - koz_margin_min
 
     r_total = 0
     USE_REWARD = "mod224c2"
@@ -1117,51 +1119,60 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         
         r_total = r1 + r2 + r5
 
-    if USE_REWARD == "mod224ph2a":
+    if USE_REWARD == "mod224c6":
+
+        r1 = 0.1 * np.exp(-err_phi_current/(0.14*360))
+
+        r2 = 0.0
+        if err_phi_current < 0.25:
+            r2 = 1.0
+
+        r3 = -0.001 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+
+        r5 = 0.0
+        if koz_margin_min < 0.0:
+            r5 = -1.0
+        elif koz_margin_min < 0.17 and koz_margin_delta > 0.0:
+            r5 = -koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224ph2b":
         """
         Goal: use mod224 from phase 1 as baseline for phase 2 tuning
         Result: 
-        Note: 
+        Note: changed pointing acc to 0.25. +/- delta err same weight, - delta less weight if close to KOZ. pointing bonus even when violated.
         """
 
         # Reward for reducing attitude error
         r1 = 0 
         # Phase 1
         if phase == "phase 1":
-            if err_phi_delta >= 0:
-                r1 = err_phi_delta
-            # Increasing error is punished more than decreasing error is rewarded
-            else:
-                r1 = 1.2 * err_phi_delta
+            r1 = err_phi_delta
+            
             
         # Phase 2
         else:      
-            if err_phi_delta >= 0:
-                if koz_margin_min > 0.17:
-                    r1 = err_phi_delta
-                elif koz_margin_min > 0:
-                    r1 = err_phi_delta * (koz_margin_min/0.17)
-                else:
-                    r1 = 0
-            
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
             else:
-                r1 = 1.2 * err_phi_delta
+                r1 = 0
+            
 
         # Bonus for high accuracy
         r2 = 0.0
         if phase == "phase 1":
             # Bonus for desired accuracy
-            if err_phi_current < 0.2:
+            if err_phi_current < 0.25:
                 r2 = 0.02
             else:
                 r2 = 0.02 * np.exp((-err_phi_current + 0.2) * 1.0)
             
         elif phase == "phase 2":
-            # No accuracy bonus if violated KOZ
-            if koz_violation_cnt > 0:
-                r2 = 0.0
             # Bonus for desired accuracy
-            elif err_phi_current < 0.2:
+            if err_phi_current < 0.25:
                 r2 = 0.02
             else:
                 r2 = 0.02 * np.exp((-err_phi_current + 0.2) * 1.0)
@@ -2642,7 +2653,7 @@ class BasiliskRWEnv(gym.Env):
 
     def step(self, action):
         q0_prev = self.state["satellite"][0]
-
+        koz_margin_min_prev = self.min_margin_koz
 
         self._apply_action(action)
 
@@ -2698,7 +2709,7 @@ class BasiliskRWEnv(gym.Env):
         #termination = self._determine_termination()
         termination = "" # Never terminate early
 
-        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt, termination, self.discount_factor)
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt, termination, self.discount_factor, koz_margin_min_prev)
 
         # Update previous torque for the next step
         self.torque_prev = action * Constants.TORQUE_WHEEL_MAX  
