@@ -1259,13 +1259,12 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         r2 = 0.0
         # Bonus for desired accuracy
         if err_phi_current < 0.25:
-            r2 = 1.0
+            r2 = 0.1
+        else:
+            r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*5.0)
 
         # Torque penalty
         r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
-
-        # Proximity reward
-        r4 = np.exp(- (err_phi_current - 0.25)*5.0)
             
         # Penalty for entering / being close to keep out zone
         r5 = 0.0
@@ -1277,7 +1276,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             else:
                 r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
         
-        r_total = r1 + r2 + r3 + r4 + r5
+        r_total = r1 + r2 + r3 + r5
 
     if USE_REWARD == "mod224ph2a":
         """
