@@ -1277,7 +1277,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             else:
                 r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
         
-        r_total = r1 + r2 + r3 + r5
+        r_total = r1 + r2 + r3 + r4 + r5
 
     if USE_REWARD == "mod224ph2a":
         """
