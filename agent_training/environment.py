@@ -294,7 +294,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     koz_margin_delta = koz_margin_min_prev - koz_margin_min
 
     r_total = 0
-    USE_REWARD = "mod224d2"
+    USE_REWARD = "mod224d3"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -1262,6 +1262,49 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             r2 = 0.1
         else:
             r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*5.0)
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d3":
+        """
+        Goal: optimize
+        Result: 
+        Note: different weight
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = 0.1
+        else:
+            r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*1.0)
 
         # Torque penalty
         r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
