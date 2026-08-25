@@ -349,13 +349,11 @@ def create_environment(model_name, initial_state=None, phase_name=None, phase_ty
     # Track custom metrics in monitor wrapper
     custom_info_keywords = (
         "custom_metrics/initial_error_angle",
-        "custom_metrics/initial_angular_velocity", 
+        "custom_metrics/initial_angular_velocity",
         "custom_metrics/final_error_angle",
         "custom_metrics/settling_time",
-        "custom_metrics/avg_torque",
-        "custom_metrics/max_torque",
-        "custom_metrics/max_torque_prev",
-        "custom_metrics/settled",
+        "custom_metrics/min_margin_koz",
+        "custom_metrics/entered_koz_count"
     )
 
     # If phase name is available, use it in the monitor log filename
