@@ -294,7 +294,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     koz_margin_delta = koz_margin_min_prev - koz_margin_min
 
     r_total = 0
-    USE_REWARD = "mod224d3"
+    USE_REWARD = "mod224d4"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -1361,6 +1361,49 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             # Gradial penalty if outside
             else:
                 r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d4a1":
+        """
+        Goal: optimize
+        Result: 
+        Note: higher possible safe progress
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.5)
+                else:
+                    r1 = 1.5 * err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = 0.2
+        else:
+            r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*1.0)
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.5
+            # Gradial penalty if outside
+            else:
+                r5 = -1.5 * np.exp(-koz_margin_min * 50.0)
         
         r_total = r1 + r2 + r3 + r5
 
@@ -3141,6 +3184,8 @@ class LSTM(BaseFeaturesExtractor):
             batch_first=True # Expects batch dimension first
         )
 
+        #self.timestep = 0
+
     def forward(self, observations):
         sat_obs: th.Tensor = observations["satellite"]
         zones_obs: th.Tensor = observations["zones"]
@@ -3206,5 +3251,10 @@ class LSTM(BaseFeaturesExtractor):
         #     # Separate weights and biases per gate and convert from tensor --> list.
         #     input_values = param_value[0:self.lstm_out_dim].tolist()
         #     print(f"{param_name}: {input_values}")
+
+        # if self.timestep < 500:
+        #     print(f"{self.timestep}: {self.lstm_out}")
+
+        #self.timestep += 1
 
         return combined
