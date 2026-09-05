@@ -294,7 +294,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     koz_margin_delta = koz_margin_min_prev - koz_margin_min
 
     r_total = 0
-    USE_REWARD = "mod224d4"
+    USE_REWARD = "mod224ph2d"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -1567,6 +1567,126 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
                 r5 = 0.0
 
 
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2c":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: higher reward for desired pointing.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.06
+            else:
+                r2 = 0.02 * np.exp((-err_phi_current + 0.25) * 1.0)
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.06
+            else:
+                r2 = 0.02 * np.exp((-err_phi_current + 0.25) * 1.0)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2d":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: higher reward for desired pointing. different weight.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.3
+            else:
+                r2 = 0.1 * np.exp((-err_phi_current + 0.25) * 1.0)
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.3
+            else:
+                r2 = 0.1 * np.exp((-err_phi_current + 0.25) * 1.0)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
         r_total = r1 + r2 + r4 + r5
 
     if USE_REWARD == "mod23":
