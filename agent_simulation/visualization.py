@@ -363,18 +363,28 @@ def plot_for_report(simulation_data: dict, time_end=300):
     q_0, q_1, q_2, q_3 = simulation_data["quaternion"][:, 0], simulation_data["quaternion"][:, 1], simulation_data["quaternion"][:, 2], simulation_data["quaternion"][:, 3]
     omega_x, omega_y, omega_z = simulation_data["omega"][:, 0], simulation_data["omega"][:, 1], simulation_data["omega"][:, 2]
     omega_w_x, omega_w_y, omega_w_z = simulation_data["omega_wheels"][:, 0], simulation_data["omega_wheels"][:, 1], simulation_data["omega_wheels"][:, 2]
+    norm_q = simulation_data["quaternion_norm"]
     torques_array = simulation_data["torques"]
+    rewards_array = simulation_data["rewards"]
+    rewards_discounted_array = simulation_data["rewards_discounted"]
+    cumulative_rewards = simulation_data["cumulative_rewards"]
+    cumulative_rewards_discounted = simulation_data["cumulative_rewards_discounted"]
     times = simulation_data["times"]
-    normal_vector_koz = simulation_data["normal_vector_koz"]
-    half_angle_koz = simulation_data["half_angle_koz"]
+    normal_vector_koz_array = simulation_data["normal_vector_koz_array"] # normal vector in world frame
+    half_angle_koz_array = simulation_data["half_angle_koz_array"]
     margin_angles_koz = simulation_data["margin_angles_koz"]
+    direction_koz = simulation_data["direction_koz"] # normal vector in body frame
     min_margin_koz = simulation_data["min_margin_koz"]
     cnt_Koz_violations = simulation_data["cnt_Koz_violations"]
+    lstm_output = simulation_data["lstm_output"]
 
     print("Minimum margin KOZ:", min_margin_koz, "degrees")
     print("Count KOZ violations:", cnt_Koz_violations)
-    print("Half angle KOZ:", half_angle_koz*180/np.pi, "degrees")
-    
+    for idx, angle in enumerate(half_angle_koz_array):
+        print(f"Half angle KOZ {idx+1}:", angle*180/np.pi, "degrees")
+
+    # How many KOZs there are in this episode
+    koz_cnt = len(normal_vector_koz_array)
 
     # Extract rotation axes and angles for all time points
     rotation_axes = []
@@ -388,6 +398,9 @@ def plot_for_report(simulation_data: dict, time_end=300):
     # Convert to numpy arrays
     rotation_axes = np.array(rotation_axes)  # Shape: (N, 3)
     rotation_angles = np.array(rotation_angles)  # Shape: (N,)
+    
+    # Convert to degrees
+    rotation_angles_deg = rotation_angles * 180 / np.pi
 
     # Calculate the body X-axis direction (boresight) at each time point using the quaternion rotation
     body_axis_arr = []
@@ -412,52 +425,60 @@ def plot_for_report(simulation_data: dict, time_end=300):
     ax1 = fig1.add_subplot(111, projection="3d")
     
     # Adjust subplot to fill more of the figure space
-    fig1.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    #fig1.subplots_adjust(left=0, right=5, top=5, bottom=0)
     
     # Plot trajectory on unit sphere (rotation axes are unit vectors)
-    ax1.plot(body_axis_arr[:, 0], body_axis_arr[:, 1], body_axis_arr[:, 2], "b-", alpha=0.7, linewidth=3, label="Boresight axis trajectory")
+    ax1.plot(body_axis_arr[:, 0], body_axis_arr[:, 1], body_axis_arr[:, 2], "b-", alpha=0.7, linewidth=3, label="Boresight Trajectory")
     ax1.scatter(body_axis_arr[0, 0], body_axis_arr[0, 1], body_axis_arr[0, 2], color="green", s=50, label="Start")
     ax1.scatter(body_axis_arr[-1, 0], body_axis_arr[-1, 1], body_axis_arr[-1, 2], color="red", s=50, label="End")
 
     # Plot target last with higher zorder to ensure it's always on top
     ax1.scatter(1, 0, 0, color="gold", s=200, marker="*", label="Target", zorder=1000, edgecolors='black', linewidths=1)
 
-    def _generate_keep_out_zone_circle():
+    def _generate_keep_out_zone_circles():
         # Create circle points for the keep out zone
 
         theta = np.linspace(0, 2 * np.pi, 100)
-        circle_points = []
+        circle_points_array = []
 
-        for angle in theta:
-            # Generate points on the circle in the plane perpendicular to the normal vector
-            v = np.array([np.cos(angle), np.sin(angle), 0])
+        for idx in range(len(normal_vector_koz_array)):
+            circle_points = []
 
-            # Rotate v to be perpendicular to koz_normal
-            if np.allclose(normal_vector_koz, [0, 0, 1]):
-                rot_axis = np.array([1, 0, 0])
-            else:
-                rot_axis = np.cross([0, 0, 1], normal_vector_koz)
-                rot_axis /= np.linalg.norm(rot_axis)
+            for angle in theta:
+                # Generate points on the circle in the plane perpendicular to the normal vector
+                v = np.array([np.cos(angle), np.sin(angle), 0])
 
-            angle_to_rotate = np.arccos(np.dot(normal_vector_koz, [0, 0, 1]))
+                # Rotate v to be perpendicular to koz_normal
+                if np.allclose(normal_vector_koz_array[idx], [0, 0, 1]):
+                    rot_axis = np.array([1, 0, 0])
+                else:
+                    rot_axis = np.cross([0, 0, 1], normal_vector_koz_array[idx])
+                    rot_axis /= np.linalg.norm(rot_axis)
 
-            # Rodrigues' rotation formula
-            v_rotated = (v * np.cos(angle_to_rotate) +
-                        np.cross(rot_axis, v) * np.sin(angle_to_rotate) +
-                        rot_axis * np.dot(rot_axis, v) * (1 - np.cos(angle_to_rotate)))
-            
-            # Scale to the radius of the keep out zone circle
-            radius = np.sin(half_angle_koz)
-            circle_point = normal_vector_koz * np.cos(half_angle_koz) + v_rotated * radius
-            circle_points.append(circle_point)
+                angle_to_rotate = np.arccos(np.dot(normal_vector_koz_array[idx], [0, 0, 1]))
 
-        return circle_points
+                # Rodrigues' rotation formula
+                v_rotated = (v * np.cos(angle_to_rotate) +
+                            np.cross(rot_axis, v) * np.sin(angle_to_rotate) +
+                            rot_axis * np.dot(rot_axis, v) * (1 - np.cos(angle_to_rotate)))
+                
+                # Scale to the radius of the keep out zone circle
+                radius = np.sin(half_angle_koz_array[idx])
+                circle_point = normal_vector_koz_array[idx] * np.cos(half_angle_koz_array[idx]) + v_rotated * radius
+                circle_points.append(circle_point)
 
+            circle_points_array.append(circle_points)
+
+        return circle_points_array
+    
     # Plot keep out zone as a ring on the unit sphere
-    if normal_vector_koz is not None and half_angle_koz is not None:
-        circle_points = _generate_keep_out_zone_circle()
-        circle_points = np.array(circle_points)
-        ax1.plot(circle_points[:, 0], circle_points[:, 1], circle_points[:, 2], "orange", linewidth=2, label="Keep-out zone")
+    if normal_vector_koz_array is not None and half_angle_koz_array is not None:
+        circle_points_array = _generate_keep_out_zone_circles()
+        circle_points_array = np.array(circle_points_array)
+
+        ax1.plot(circle_points_array[0][:, 0], circle_points_array[0][:, 1], circle_points_array[0][:, 2], "orange", linewidth=2, label="Keep Out Zone 1") if len(normal_vector_koz_array) > 0 else None
+        ax1.plot(circle_points_array[1][:, 0], circle_points_array[1][:, 1], circle_points_array[1][:, 2], "red", linewidth=2, label="Keep Out Zone 2") if len(normal_vector_koz_array) > 1 else None
+        ax1.plot(circle_points_array[2][:, 0], circle_points_array[2][:, 1], circle_points_array[2][:, 2], "purple", linewidth=2, label="Keep Out Zone 3") if len(normal_vector_koz_array) > 2 else None
     
     # Draw unit sphere wireframe
     u = np.linspace(0, 2 * np.pi, 20)
@@ -466,12 +487,16 @@ def plot_for_report(simulation_data: dict, time_end=300):
     sphere_y = np.outer(np.sin(u), np.sin(v))
     sphere_z = np.outer(np.ones(np.size(u)), np.cos(v))
     ax1.plot_wireframe(sphere_x, sphere_y, sphere_z, alpha=0.1, color="gray")
+    ax1.set_box_aspect((1, 1, 1))
     
     # Remove cartesian grid (x, y, z panes and axes)
     ax1.grid(False)
     ax1.set_axis_off()
   
-    ax1.legend(loc="lower center", bbox_to_anchor=(0.5, 0.2), fontsize=6)
+    ax1.legend(loc="lower center", bbox_to_anchor=(0.65, 0.2), fontsize=6)
+
+    plt.tight_layout()
+    plt.savefig("test11.pdf", bbox_inches="tight")
     
     # cut time and data
     times = times[:int(time_end/Constants.TIME_DELTA)]
@@ -525,6 +550,7 @@ def plot_for_report(simulation_data: dict, time_end=300):
     ax7.grid()
     
     plt.tight_layout()
+    plt.savefig("test22.pdf", bbox_inches="tight")
     plt.show()
     
     return
