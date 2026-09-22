@@ -74,10 +74,11 @@ def start_simulation(env: BasiliskRWEnv):
     normal_vector_koz_array = env.active_koz_config["normal_vector"]
     half_angle_koz_array = env.active_koz_config["half_angle_rad"]
 
-    done = False
-    while not done:
+    truncated = False
+    
+    while not truncated:
         action = action_schedule(env.steps * env.dt)
-        observation, reward, done, truncated, info = env.step(action)
+        observation, rewards, terminated, truncated, infos = env.step(action)
 
         sat_states.append(observation["satellite"])
         koz_states.append(observation["zones"])
