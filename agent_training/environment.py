@@ -261,7 +261,7 @@ def build_basilisk_sim(omega_wheel_init, satellite, dt) -> tuple[SimulationBaseC
     return sim, rw_cmd_msg, rw_effector
 
 
-@njit
+#@njit
 def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_violation_cnt, time_elapsed, termination, discount_factor, koz_margin_min_prev):
     q0_current = state[0]
     ang_vel_sat_x = state[4]
@@ -294,7 +294,7 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     koz_margin_delta = koz_margin_min_prev - koz_margin_min
 
     r_total = 0
-    USE_REWARD = "mod224ph2d"
+    USE_REWARD = "yangMod2"
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -343,6 +343,24 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
             r_direction = -1
 
         r_total = r_err + r_acc + r_direction
+
+    if USE_REWARD == "yangMod2":
+        r_err = 0.5*np.exp(-err_phi_current/20.0)
+
+        # Penalty for entering / being close to keep out zone
+        r_koz = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r_koz = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r_koz = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r_koz = 0.0
+
+        r_total = r_err + r_koz
 
     if USE_REWARD == "prak":
         # Reward for reducing attitude error
@@ -1407,6 +1425,221 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         
         r_total = r1 + r2 + r3 + r5
 
+    if USE_REWARD == "mod224d4a2":
+        """
+        Goal: optimize
+        Result: 
+        Note: no acc bonus jump, but dense.
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = -6553.6 * err_phi_current**8 + 0.2 # [0.1, 0.2]
+        else:
+            r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*1.0)
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d4a3":
+        """
+        Goal: optimize
+        Result: 
+        Note: no acc bonus jump, but dense. different weight.
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = -6553.6 * err_phi_current**8 + 0.2 # [0.1, 0.2]
+        else:
+            r2 = 0.1 * np.exp(- (err_phi_current - 0.25)*0.2)
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d4b1":
+        """
+        Goal: optimize
+        Result: 
+        Note: only reward current error on desired pointing, otherwise only delta error.
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = -6553.6 * err_phi_current**8 + 0.2 # [0.1, 0.2]
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d4b2":
+        """
+        Goal: optimize
+        Result: 
+        Note: only reward current error on desired pointing (otherwise small penalty), otherwise only delta error.
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = -6553.6 * err_phi_current**8 + 0.2 # [0.1, 0.2]
+        else:
+            r2 = -0.05 * min((err_phi_current - 0.25) / 1.0, 1.0) # [-0.05, 0] penalty for farther away but capped.
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r5
+
+    if USE_REWARD == "mod224d4c1":
+        """
+        Goal: optimize
+        Result: 
+        Note: increasing penalty with time while not desired pointing.
+        """
+
+        # Bonus for reducing attitude
+        r1 = 0.0
+        if phase == "phase 1":
+            r1 = err_phi_delta
+        else:
+            if koz_margin_min > 0:
+                if err_phi_delta >= 0:
+                    r1 = min(err_phi_delta, 1.0) * min(koz_margin_min, 1.0)
+                else:
+                    r1 = err_phi_delta
+            else:
+                r1 = 0.0
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        # Bonus for desired accuracy
+        if err_phi_current < 0.25:
+            r2 = -err_phi_current + 0.35 # [0.1, 0.35]
+
+        # Torque penalty
+        r3 = -0.01 * np.sqrt(torque_1**2 + torque_2**2 + torque_3**2)
+
+        # Time increasing penalty for being outside desired accuracy
+        r4 = -time_elapsed * 0.0001 * err_phi_current
+            
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty if outside
+            else:
+                r5 = -1.0 * np.exp(-koz_margin_min * 50.0)
+        
+        r_total = r1 + r2 + r3 + r4 + r5
+
+        
     if USE_REWARD == "mod224d5":
         """
         Goal: optimize
@@ -1608,6 +1841,120 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
                 r2 = 0.06
             else:
                 r2 = 0.02 * np.exp((-err_phi_current + 0.25) * 1.0)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2c2":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: pointing reward no jump.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2c3":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: higher reward for desired pointing and close to target
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.4
+            else:
+                r2 = 0.1 * np.exp((-err_phi_current) * 1.0)
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if err_phi_current <= 0.25:
+                r2 = 0.4
+            else:
+                r2 = 0.1 * np.exp((-err_phi_current) * 1.0)
             
 
         # Penalty for using large torques
@@ -2950,7 +3297,8 @@ class BasiliskRWEnv(gym.Env):
             return
         else:
             # Minimum margin angle between two KOZs
-            MARGIN = 20.0 * np.pi / 180.0
+            #MARGIN = 20.0 * np.pi / 180.0
+            MARGIN = 0
 
             # For each additional KOZ, generate another KOZ
             for koz_nr in range(2, self.current_nr_koz+1):
