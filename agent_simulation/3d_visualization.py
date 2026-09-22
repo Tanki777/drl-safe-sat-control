@@ -65,6 +65,10 @@ class EpisodePlaybackController:
         self._create_gui()
         self._register_callbacks()
 
+        # If evaluation files exist, load the first one and the first episode.
+        if os.listdir(eval_data_dir):
+            self._load_episode(os.listdir(eval_data_dir)[0], "0")
+
     def _get_episode_selection_options(self, evaluation_file_name: str) -> list:
         file_path = os.path.join(eval_data_dir, evaluation_file_name)
         initial_episode_count = len(load_evaluation_data(file_path))
@@ -140,6 +144,8 @@ class EpisodePlaybackController:
 
         # Command
         self.command_play_pause.disabled = False
+        self.command_load_previous_episode.disabled = False
+        self.command_load_next_episode.disabled = False
 
     def _reset_episode(self) -> None:
   
@@ -174,6 +180,12 @@ class EpisodePlaybackController:
 
             # Add a button to load episode
             self.gui_load_episode = self.server.gui.add_button("Load episode", disabled=disabled)
+
+            # Add a button to load previous episode
+            self.gui_load_episode_previous = self.server.gui.add_button("Load previous episode", disabled=disabled)
+
+            # Add a button to load next episode
+            self.gui_load_episode_next = self.server.gui.add_button("Load next episode", disabled=disabled)
 
             
         # Add a playback GUI folder.
@@ -224,10 +236,16 @@ class EpisodePlaybackController:
             # Add dropdown menu to select camera perspective.
             self.gui_camera_perspective = self.server.gui.add_dropdown("Perspective", options=("target","boresight"), initial_value="target", disabled=True)
 
+        # --- COMMANDS ---
         # Add command to play / pause with spacebar.
         self.command_play_pause = self.server.gui.add_command(label="Toggle play/pause", hotkey="space", disabled=True)
 
-    # TODO: add callbacks for episode selection
+        # Add command to load previous episode with Y
+        self.command_load_previous_episode = self.server.gui.add_command(label="Load previous episode", hotkey="y", disabled=True)
+
+        # Add command to load next episode with X
+        self.command_load_next_episode = self.server.gui.add_command(label="Load next episode", hotkey="x", disabled=True)
+
     def _register_callbacks(self) -> None:
 
         # On updating evaluation file selection, update episode GUI selection.
@@ -241,6 +259,22 @@ class EpisodePlaybackController:
         @self.gui_load_episode.on_click
         def _(_) -> None:
             # TODO: dont load if same episode as before
+            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+
+        # On clicking load previous episode button, load previous episode
+        @self.gui_load_episode_previous.on_click
+        def _(_) -> None:
+            current_episode = int(self.gui_selected_episode.value)
+            previous_episode = max(0, current_episode - 1)
+            self.gui_selected_episode.value = str(previous_episode)
+            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+
+        # On clicking load next episode button, load next episode
+        @self.gui_load_episode_next.on_click
+        def _(_) -> None:
+            current_episode = int(self.gui_selected_episode.value)
+            next_episode = min(len(self.gui_selected_episode.options) - 1, current_episode + 1)
+            self.gui_selected_episode.value = str(next_episode)
             self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
 
         # On updating the timestep, set new frame.
@@ -286,6 +320,22 @@ class EpisodePlaybackController:
         @self.command_play_pause.on_trigger
         def _(_) -> None:
             self.gui_playing.value = not self.gui_playing.value
+
+        # On triggering load previous episode hotkey, load previous episode.
+        @self.command_load_previous_episode.on_trigger
+        def _(_) -> None:
+            current_episode = int(self.gui_selected_episode.value)
+            previous_episode = max(0, current_episode - 1)
+            self.gui_selected_episode.value = str(previous_episode)
+            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+
+        # On triggering load next episode hotkey, load next episode.
+        @self.command_load_next_episode.on_trigger
+        def _(_) -> None:
+            current_episode = int(self.gui_selected_episode.value)
+            next_episode = min(len(self.gui_selected_episode.options) - 1, current_episode + 1)
+            self.gui_selected_episode.value = str(next_episode)
+            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
 
         # On client connect, save client handle (we only consider single client in this project).
         @self.server.on_client_connect
