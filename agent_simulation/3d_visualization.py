@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 import viser
 import viser.transforms as tf
@@ -61,30 +62,31 @@ class EpisodePlaybackController:
         self.camera_rate = 60.0
 
         self.client: viser.ClientHandle = None
+        self._data_lock = threading.RLock()
+        self._loaded_file_name: str | None = None
+        self._episodes: list | None = None
+        self.trajectory_handle = None
+        self.koz_handles = []
         
         self._create_gui()
         self._register_callbacks()
 
-        # If evaluation files exist, load the first one and the first episode.
-        if os.listdir(eval_data_dir):
-            self._load_episode(os.listdir(eval_data_dir)[0], "0")
-
-    def _get_episode_selection_options(self, evaluation_file_name: str) -> list:
-        file_path = os.path.join(eval_data_dir, evaluation_file_name)
-        initial_episode_count = len(load_evaluation_data(file_path))
-        options = np.arange(initial_episode_count).tolist() # E.g. 20 --> [0,1,2,...,19]
-
-        # Convert list elements to string
-        for idx in iter(options):
-            options[idx] = str(options[idx])
-
-        return options
+        # Load the first file once, episode changes then reuse its data.
+        if self._evaluation_files:
+            self._switch_evaluation_file(self._evaluation_files[0])
 
     def _create_scene_objects(self) -> None:
+        self._clear_koz()
         koz_cnt = len(self.episode_data["normal_vector_koz_array"])
     
         for koz_idx in range(koz_cnt):
-            add_koz(self.server, f"KOZ {koz_idx+1}", self.episode_data["normal_vector_koz_array"][koz_idx], self.episode_data["half_angle_koz_array"][koz_idx], Colors.KOZ_COLORS_ITERATOR[koz_idx])
+            self.koz_handles.append(add_koz(
+                self.server,
+                f"KOZ {koz_idx+1}",
+                self.episode_data["normal_vector_koz_array"][koz_idx],
+                self.episode_data["half_angle_koz_array"][koz_idx],
+                Colors.KOZ_COLORS_ITERATOR[koz_idx]
+            ))
     
         add_target(self.server)
         self.sat_frame_handle = add_satellite(self.server, self.episode_data["quaternion"][0])
@@ -112,18 +114,132 @@ class EpisodePlaybackController:
             line_width=3.0
         )
 
-    def _load_episode(self, file_name: str, episode_nr: str) -> None:
-        episodes = load_evaluation_data(file_name)
-        self.episode_data = episodes[int(episode_nr)] # Need to cast as GUI dropdown value is string.
+    def _clear_koz(self) -> None:
+        """
+        Clear all KOZ objects from the scene.
+        """
 
-        self._create_scene_objects()
+        for mesh_handle, border_handle in self.koz_handles:
+            mesh_handle.remove()
+            border_handle.remove()
 
-        # Set GUI timestep slider max value to correct value
-        self.gui_timestep.max = self.num_frames - 1
+        self.koz_handles.clear()
 
-        self._enable_playback_gui()
+    def _switch_evaluation_file(self, file_name: str) -> None:
+        """
+        Switch to a different evaluation file.
+        """
 
-        self._reset_episode()
+        # Use a lock to prevent concurrent access to the data while loading a new file.
+        with self._data_lock:
+
+            # If the same file is selected again, do nothing.
+            if file_name == self._loaded_file_name:
+                return
+
+            # Disable GUI elements while loading the new file.
+            self.gui_loading_status.content = "Loading evaluation file..."
+            self.gui_evaluation_file.disabled = True
+            self.gui_selected_episode.disabled = True
+            self.gui_load_episode.disabled = True
+            self.gui_load_episode_previous.disabled = True
+            self.gui_load_episode_next.disabled = True
+            self.gui_playing.value = False
+            self._disable_playback_gui()
+
+            # Drop every reference to the previous file before reading the next one.
+            if self.trajectory_handle is not None:
+                self.trajectory_handle.remove()
+                self.trajectory_handle = None
+
+            self._clear_koz()
+            self._episodes = None
+            self._loaded_file_name = None
+            self.episode_data = None
+            self.times = None
+            self.quaternions = None
+            self.trajectory_points = None
+
+            try:
+                episodes = load_evaluation_data(file_name)
+                if not episodes:
+                    raise ValueError(f"Evaluation file {file_name!r} has no episodes")
+
+                # Update GUI elements with the new file episodes.
+                self._episodes = episodes
+                self._loaded_file_name = file_name
+                self.gui_selected_episode.options = [str(i) for i in range(len(episodes))]
+                self.gui_selected_episode.value = "0"
+                self._load_episode("0")
+                self.gui_loading_status.content = "Evaluation file loaded."
+                self.gui_selected_episode.disabled = False
+                self.gui_load_episode.disabled = False
+                self.gui_load_episode_previous.disabled = False
+                self.gui_load_episode_next.disabled = False
+
+            # Handle exceptions during file loading and reset the state if an error occurs.
+            except Exception as exc:
+                if self.trajectory_handle is not None:
+                    self.trajectory_handle.remove()
+                    self.trajectory_handle = None
+
+                self._clear_koz()
+                self._episodes = None
+                self._loaded_file_name = None
+                self.episode_data = None
+                self.times = None
+                self.quaternions = None
+                self.trajectory_points = None
+                self._disable_playback_gui()
+                self.gui_loading_status.content = f"Could not load evaluation file: {exc}"
+                print(f"Could not load evaluation file {file_name!r}: {exc}")
+
+            # Enable the evaluation file dropdown regardless of success or failure.    
+            finally:
+                self.gui_evaluation_file.disabled = False
+
+    def _load_episode(self, episode_nr: str) -> None:
+        """
+        Loads a specific episode from the currently loaded evaluation file.
+        """
+
+        # Use a lock to prevent concurrent access to the data while loading a new episode.
+        with self._data_lock:
+            if self._episodes is None:
+                return
+            
+            self.episode_data = self._episodes[int(episode_nr)] # GUI dropdown value is a string.
+
+            self._create_scene_objects()
+
+            # Set GUI timestep slider max value to correct value.
+            self.gui_timestep.max = self.num_frames - 1
+
+            self._enable_playback_gui()
+
+            self._reset_episode()
+
+    def _disable_playback_gui(self) -> None:
+        """
+        Disables all playback GUI elements.
+        """
+
+        for handle in (
+            self.gui_playing,
+            self.gui_timestep,
+            self.gui_previous,
+            self.gui_next,
+            self.gui_reset,
+            self.gui_speed,
+            self.gui_loop,
+            self.gui_show_trajectory,
+            self.gui_show_full_trajectory,
+            self.gui_camera_perspective,
+            self.command_play_pause,
+            self.command_load_previous_episode,
+            self.command_load_next_episode
+        ):
+            handle.disabled = True
 
     def _enable_playback_gui(self) -> None:
         # Playback
@@ -160,32 +276,30 @@ class EpisodePlaybackController:
 
         # Add episode selection GUI folder
         with self.server.gui.add_folder("Episode Selection"):
-            # If evaluation files exist, load them.
-            if os.listdir(eval_data_dir):
-                file_options = os.listdir(eval_data_dir)
-                episode_options = self._get_episode_selection_options(os.listdir(eval_data_dir)[0])
-                disabled = False
-
-            # Otherwise, show warning.
-            else:
-                file_options = ("Could not find evaluation_data folder",)
-                episode_options = ("0")
-                disabled = True
+            self._evaluation_files = sorted(
+                name for name in os.listdir(eval_data_dir) if name.endswith(".npz")
+            ) if os.path.isdir(eval_data_dir) else []
+            file_options = self._evaluation_files or ("No evaluation files found",)
+            disabled = not self._evaluation_files
 
             # Add a dropdown menu to list all evaluation files. For some reason it is bugged if not using the extra comma here...
             self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=file_options, disabled=disabled)
 
             # Add a dropdown menu to select the episode among the episodes of the selected file.
-            self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=episode_options, disabled=disabled)
+            self.gui_selected_episode = self.server.gui.add_dropdown("Episode", options=("0",), disabled=True)
 
             # Add a button to load episode
-            self.gui_load_episode = self.server.gui.add_button("Load episode", disabled=disabled)
+            self.gui_load_episode = self.server.gui.add_button("Load episode", disabled=True)
 
             # Add a button to load previous episode
-            self.gui_load_episode_previous = self.server.gui.add_button("Load previous episode", disabled=disabled)
+            self.gui_load_episode_previous = self.server.gui.add_button("Load previous episode", disabled=True)
 
             # Add a button to load next episode
-            self.gui_load_episode_next = self.server.gui.add_button("Load next episode", disabled=disabled)
+            self.gui_load_episode_next = self.server.gui.add_button("Load next episode", disabled=True)
+
+            self.gui_loading_status = self.server.gui.add_markdown(
+                "Select an evaluation file." if self._evaluation_files else "No evaluation files found."
+            )
 
             
         # Add a playback GUI folder.
@@ -252,14 +366,13 @@ class EpisodePlaybackController:
         @self.gui_evaluation_file.on_update
         def _(_) -> None:
 
-            new_value = self.gui_evaluation_file.value
-            self.gui_selected_episode.options = self._get_episode_selection_options(new_value)
+            self._switch_evaluation_file(self.gui_evaluation_file.value)
 
         # On clicking load episode button, load episode
         @self.gui_load_episode.on_click
         def _(_) -> None:
             # TODO: dont load if same episode as before
-            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+            self._load_episode(self.gui_selected_episode.value)
 
         # On clicking load previous episode button, load previous episode
         @self.gui_load_episode_previous.on_click
@@ -267,7 +380,7 @@ class EpisodePlaybackController:
             current_episode = int(self.gui_selected_episode.value)
             previous_episode = max(0, current_episode - 1)
             self.gui_selected_episode.value = str(previous_episode)
-            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+            self._load_episode(self.gui_selected_episode.value)
 
         # On clicking load next episode button, load next episode
         @self.gui_load_episode_next.on_click
@@ -275,7 +388,7 @@ class EpisodePlaybackController:
             current_episode = int(self.gui_selected_episode.value)
             next_episode = min(len(self.gui_selected_episode.options) - 1, current_episode + 1)
             self.gui_selected_episode.value = str(next_episode)
-            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+            self._load_episode(self.gui_selected_episode.value)
 
         # On updating the timestep, set new frame.
         @self.gui_timestep.on_update
@@ -304,22 +417,34 @@ class EpisodePlaybackController:
         # On updating show trajectory checkbox, update its visibility.
         @self.gui_show_trajectory.on_update
         def _(_) -> None:
-            self.trajectory_handle.visible = self.gui_show_trajectory.value
+            # Use a lock to prevent concurrent access to the data while updating trajectory visibility.
+            with self._data_lock:
+                if self._episodes is not None:
+                    self.trajectory_handle.visible = self.gui_show_trajectory.value
 
         # On updating show entire episode trajectory, update trajectory points shown.
         @self.gui_show_full_trajectory.on_update
         def _(_) -> None:
-            self._update_trajectory(int(self.gui_timestep.value))
+            # Use a lock to prevent concurrent access to the data while updating trajectory points.
+            with self._data_lock:
+                if self._episodes is not None:
+                    self._update_trajectory(int(self.gui_timestep.value))
 
         # On updating camera perspective, handle it.
         @self.gui_camera_perspective.on_update
         def _(_) -> None:
-            self._handle_camera_perspective_change()
+            # Use a lock to prevent concurrent access to the data while changing camera perspective.
+            with self._data_lock:
+                if self._episodes is not None:
+                    self._handle_camera_perspective_change()
 
         # On triggering play / pause hotkey, toggle play / pause.
         @self.command_play_pause.on_trigger
         def _(_) -> None:
-            self.gui_playing.value = not self.gui_playing.value
+            # Use a lock to prevent concurrent access to the data while toggling play/pause.
+            with self._data_lock:
+                if self._episodes is not None:
+                    self.gui_playing.value = not self.gui_playing.value
 
         # On triggering load previous episode hotkey, load previous episode.
         @self.command_load_previous_episode.on_trigger
@@ -327,7 +452,7 @@ class EpisodePlaybackController:
             current_episode = int(self.gui_selected_episode.value)
             previous_episode = max(0, current_episode - 1)
             self.gui_selected_episode.value = str(previous_episode)
-            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+            self._load_episode(self.gui_selected_episode.value)
 
         # On triggering load next episode hotkey, load next episode.
         @self.command_load_next_episode.on_trigger
@@ -335,7 +460,7 @@ class EpisodePlaybackController:
             current_episode = int(self.gui_selected_episode.value)
             next_episode = min(len(self.gui_selected_episode.options) - 1, current_episode + 1)
             self.gui_selected_episode.value = str(next_episode)
-            self._load_episode(self.gui_evaluation_file.value, self.gui_selected_episode.value)
+            self._load_episode(self.gui_selected_episode.value)
 
         # On client connect, save client handle (we only consider single client in this project).
         @self.server.on_client_connect
@@ -398,6 +523,13 @@ class EpisodePlaybackController:
         Sets a specific frame number.
         """
 
+        # Use a lock to prevent concurrent access to the data while setting a new frame.
+        with self._data_lock:
+            if self._episodes is None:
+                return
+            self._set_frame(frame_index)
+
+    def _set_frame(self, frame_index: int) -> None:
         frame_index = int(np.clip(frame_index, 0, self.num_frames - 1))
 
         quaternion = self.quaternions[frame_index]
@@ -432,32 +564,32 @@ class EpisodePlaybackController:
             elapsed = current_time - last_update_time
             last_update_time = current_time
 
-            if self.gui_playing.value:
-                effective_fps = 10 * self._get_speed_multiplier()
+            # Use a lock to prevent concurrent access to the data while updating playback.
+            with self._data_lock:
+                if self.gui_playing.value and self._episodes is not None:
+                    effective_fps = 10 * self._get_speed_multiplier()
 
-                accumulated_frames += elapsed * effective_fps
-                frames_to_advance = int(accumulated_frames)
+                    accumulated_frames += elapsed * effective_fps
+                    frames_to_advance = int(accumulated_frames)
 
-                if frames_to_advance > 0:
-                    accumulated_frames -= frames_to_advance
+                    if frames_to_advance > 0:
+                        accumulated_frames -= frames_to_advance
 
-                    current_frame = int(
-                        self.gui_timestep.value
-                    )
-                    next_frame = current_frame + frames_to_advance
+                        current_frame = int(self.gui_timestep.value)
+                        next_frame = current_frame + frames_to_advance
 
-                    if next_frame >= self.num_frames:
-                        if self.gui_loop.value:
-                            next_frame %= self.num_frames
-                        else:
-                            next_frame = self.num_frames - 1
-                            self.gui_playing.value = False
+                        if next_frame >= self.num_frames:
+                            if self.gui_loop.value:
+                                next_frame %= self.num_frames
+                            else:
+                                next_frame = self.num_frames - 1
+                                self.gui_playing.value = False
 
-                    # Updating the GUI value triggers the timestep callback which then calls set_frame().
-                    self.gui_timestep.value = next_frame
-            else:
-                # Prevent a large jump when playback resumes.
-                accumulated_frames = 0.0
+                        # Updating the GUI value triggers the timestep callback which then calls set_frame().
+                        self.gui_timestep.value = next_frame
+                else:
+                    # Prevent a large jump when playback resumes.
+                    accumulated_frames = 0.0
 
             # Add sleep to prevent loop from blocking other tasks.
             time.sleep(1.0 / self.camera_rate)
