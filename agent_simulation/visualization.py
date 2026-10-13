@@ -9,6 +9,7 @@ import sys
 import subprocess
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
 import datetime
 import visualtorch
@@ -327,14 +328,18 @@ def plot_actual_attitude(simulation_data: dict):
     ax8.legend()
     ax8.grid()
 
-    # Plot LSTM output
+    # Plot LSTM output if available.
     ax9 = fig.add_subplot(3,4,10)
-    ax9.plot(times, lstm_output[:, 0, 0], label="$h_0$")
-    ax9.plot(times, lstm_output[:, 0, 1], label="$h_1$")
-    ax9.plot(times, lstm_output[:, 0, 2], label="$h_2$")
-    ax9.plot(times, lstm_output[:, 0, 3], label="$h_3$")
-    ax9.set_title("LSTM Output (Hidden States)")
-    ax9.legend()
+    if lstm_output.shape[-1] > 0:
+        ax9.plot(times, lstm_output[:, 0, 0], label="$h_0$")
+        ax9.plot(times, lstm_output[:, 0, 1], label="$h_1$")
+        ax9.plot(times, lstm_output[:, 0, 2], label="$h_2$")
+        ax9.plot(times, lstm_output[:, 0, 3], label="$h_3$")
+        ax9.set_title("LSTM Output (Hidden States)")
+        ax9.legend()
+    else:
+        ax9.set_title("APF Controller (No LSTM)")
+        ax9.set_axis_off()
     ax9.grid()
     
     plt.tight_layout()
@@ -382,6 +387,8 @@ def plot_for_report(simulation_data: dict, time_end=300):
     print("Count KOZ violations:", cnt_Koz_violations)
     for idx, angle in enumerate(half_angle_koz_array):
         print(f"Half angle KOZ {idx+1}:", angle*180/np.pi, "degrees")
+
+    print("Sum torque magnitude:", np.sum(np.linalg.norm(torques_array, axis=1)), "Nm")
 
     # How many KOZs there are in this episode
     koz_cnt = len(normal_vector_koz_array)
@@ -496,7 +503,7 @@ def plot_for_report(simulation_data: dict, time_end=300):
     ax1.legend(loc="lower center", bbox_to_anchor=(0.65, 0.2), fontsize=6)
 
     plt.tight_layout()
-    plt.savefig("test11.pdf", bbox_inches="tight")
+    plt.show()
     
     # cut time and data
     times = times[:int(time_end/Constants.TIME_DELTA)]
@@ -509,48 +516,58 @@ def plot_for_report(simulation_data: dict, time_end=300):
     omega_z = omega_z[:int(time_end/Constants.TIME_DELTA)]
     torques_array = torques_array[:int(time_end/Constants.TIME_DELTA)]
     margin_angles_koz = margin_angles_koz[:int(time_end/Constants.TIME_DELTA)]
+    cumulative_rewards = cumulative_rewards[:int(time_end/Constants.TIME_DELTA)]
+    rotation_angles_deg = rotation_angles_deg[:int(time_end/Constants.TIME_DELTA)]
 
-    # figure for attitude, angular velocity, torque and KOZ margin
-    fig2 = plt.figure(figsize=(6, 6))
+    # figure for reward, attitude, angular velocity, torque and KOZ margin
+    fig2 = plt.figure(figsize=(6, 8))
+
+    # Cumulative Reward vs Time
+    ax4_1 = fig2.add_subplot(511)  # New subplot for cumulative reward
+    ax4_1.plot(times, cumulative_rewards, label="Cumulative Reward")
+    ax4_1.set_ylabel("Reward")
+    ax4_1.grid()
+    ax4_1.legend(loc="lower right")
     
-    # Plot quaternion
-    ax4 = fig2.add_subplot(411)
-    ax4.plot(times, q_0, label="$q_0$")
-    ax4.plot(times, q_1, label="$q_1$")
-    ax4.plot(times, q_2, label="$q_2$")
-    ax4.plot(times, q_3, label="$q_3$")
-    ax4.set_ylabel("q")
+    # Plot attitude error
+    ax4 = fig2.add_subplot(512)
+    ax4.plot(times, rotation_angles_deg, label="$\\phi_{\\mathrm{e}}$")
+    ax4.axhline(y=1.0, color="r", linestyle="--", label="Accuracy Threshold (1°)")
+    ax4.set_ylabel("Attitude Error [deg]")
+    ax4.grid(True)
     ax4.legend(loc="upper right")
-    ax4.grid()
+    ax4.set_yscale("log")
 
     # Plot angular velocity
-    ax5 = fig2.add_subplot(412)
+    ax5 = fig2.add_subplot(513)
     ax5.plot(times, omega_x * (180 / np.pi), label="$\\omega_x$")
     ax5.plot(times, omega_y * (180 / np.pi), label="$\\omega_y$")
     ax5.plot(times, omega_z * (180 / np.pi), label="$\\omega_z$")
-    ax5.set_ylabel("$\\omega$ [deg/s]")
+    ax5.set_ylabel("Ang. Velocity [deg/s]")
     ax5.legend(loc="upper right")
     ax5.grid()
     # Plot torque input
-    ax6 = fig2.add_subplot(413)
+    ax6 = fig2.add_subplot(514)
     ax6.plot(times, torques_array[:, 0], label="$\\tau_1$")
     ax6.plot(times, torques_array[:, 1], label="$\\tau_2$")
     ax6.plot(times, torques_array[:, 2], label="$\\tau_3$")
-    ax6.set_ylabel("$\\tau$ [Nm]")
+    ax6.set_ylabel("Torque [Nm]")
     #ax6.set_xlabel("Time [s]")
     ax6.legend(loc="upper right")
     ax6.grid()
 
     # Plot keep out zone margin angle
-    ax7 = fig2.add_subplot(414)
-    ax7.plot(times, margin_angles_koz, label="$\\theta_{margin}$")
+    ax7 = fig2.add_subplot(515)
+
+    for koz_idx in range(koz_cnt):
+            ax7.plot(times, margin_angles_koz[:, koz_idx], label="$\\theta_{\\mathrm{margin}}$"+f" (KOZ {koz_idx+1})")
+
     ax7.set_xlabel("Time [s]")
-    ax7.set_ylabel("$\\theta_{margin}$ [deg]")
-    ax7.legend(loc="upper right")
+    ax7.set_ylabel("KOZ Margin [deg]")
+    ax7.legend(loc="lower right")
     ax7.grid()
     
     plt.tight_layout()
-    plt.savefig("test22.pdf", bbox_inches="tight")
     plt.show()
     
     return
@@ -607,7 +624,317 @@ def visualize_net_arch(model, env):
         show_arrows=True
     )
     img.save("net_arch_test.png")
+
+
+def plot_tensorboard_data():
+    # Switch to interactive backend for 3D plots
+    matplotlib.use("TkAgg")
+
+    timestep_formatter = FuncFormatter(lambda step, _: f"{step / 1_000_000:g}M")
+
+    project_dir = os.path.dirname(repo_parent_dir)
+    data_dir = os.path.join(project_dir, "figures", "tensorboard", "data_csv", "rewMod224ph2c2_fast_schedFullv1c3")
+    data_dir_2 = os.path.join(project_dir, "figures", "tensorboard", "data_csv", "rewMod224ph2c2_fast_kozMinMargin0_schedFullv1c3")
+
+    data = dict()
+    data_2 = dict()
+
+    # first data
+    for file in os.listdir(data_dir):
+        if file.endswith(".csv"):
+            file_path = os.path.join(data_dir, file)
+            tag = file.replace(".csv", "")
+            data[tag] = np.loadtxt(file_path, delimiter=",", skiprows=1, usecols=(1, 2), unpack=True, ndmin=2)
+
+    # second data
+    for file in os.listdir(data_dir_2):
+        if file.endswith(".csv"):
+            file_path = os.path.join(data_dir_2, file)
+            tag = file.replace(".csv", "")
+            data_2[tag] = np.loadtxt(file_path, delimiter=",", skiprows=1, usecols=(1, 2), unpack=True, ndmin=2)
+
+    # Figure 1
+    fig1 = plt.figure(figsize=(6, 8))
+
     
+    
+    # Plot actor_loss
+    ax1_1 = fig1.add_subplot(411)
+    ax1_1.plot(*data["train_actor_loss"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax1_1.plot(*data_2["train_actor_loss"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax1_1.set_ylabel("Actor Loss")
+    ax1_1.legend(loc="lower right")
+    ax1_1.grid()
+
+    # Plot critic_loss log scale
+    ax1_2 = fig1.add_subplot(412)
+    ax1_2.plot(*data["train_critic_loss"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax1_2.plot(*data_2["train_critic_loss"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax1_2.set_ylabel("Critic Loss")
+    ax1_2.set_yscale("log")
+    ax1_2.legend(loc="upper right")
+    ax1_2.grid()
+
+    # Plot ent_coef log scale
+    ax1_3 = fig1.add_subplot(413)
+    ax1_3.plot(*data["train_ent_coef"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax1_3.plot(*data_2["train_ent_coef"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax1_3.set_ylabel("Entropy Coefficient")
+    ax1_3.set_yscale("log")
+    ax1_3.legend(loc="upper right")
+    ax1_3.grid()
+
+    # Plot fps
+    ax1_4 = fig1.add_subplot(414)
+    ax1_4.plot(*data["time_fps"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax1_4.plot(*data_2["time_fps"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax1_4.set_xlabel("Timestep")
+    ax1_4.set_ylabel("FPS")
+    ax1_4.legend(loc="upper right")
+    ax1_4.grid()
+
+    for ax in fig1.axes:
+        ax.xaxis.set_major_formatter(timestep_formatter)
+
+    plt.tight_layout()
+    plt.show()
+
+    # Figure 2
+    fig2 = plt.figure(figsize=(6, 8))
+
+    # Plot ep_rew_mean
+    ax2_1 = fig2.add_subplot(411)
+    ax2_1.plot(*data["rollout_ep_rew_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax2_1.plot(*data_2["rollout_ep_rew_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax2_1.set_ylabel("Reward")
+    ax2_1.legend(loc="lower right")
+    ax2_1.grid()
+
+    # Plot final_error_angle_max log scale
+    ax2_2 = fig2.add_subplot(412)
+    ax2_2.plot(*data["custom_final_error_angle_max"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax2_2.plot(*data_2["custom_final_error_angle_max"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax2_2.set_ylabel("Final Error Angle [deg]")
+    ax2_2.set_yscale("log")
+    ax2_2.legend(loc="upper right")
+    ax2_2.grid()
+
+    # Plot entered_koz_count_mean log scale
+    ax2_3 = fig2.add_subplot(413)
+    ax2_3.plot(*data["custom_entered_koz_count_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax2_3.plot(*data_2["custom_entered_koz_count_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax2_3.set_ylabel("Entered KOZ Count")
+    #ax2_3.set_yscale("log")
+    ax2_3.legend(loc="upper right")
+    ax2_3.grid()
+
+    # Plot min_margin_koz_mean
+    ax2_4 = fig2.add_subplot(414)
+    ax2_4.plot(*data["custom_min_margin_koz_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
+    ax2_4.plot(*data_2["custom_min_margin_koz_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
+    ax2_4.set_xlabel("Timestep")
+    ax2_4.set_ylabel("Min KOZ Margin [deg]")
+    ax2_4.legend(loc="lower right")
+    ax2_4.grid()
+
+    for ax in fig2.axes:
+        ax.xaxis.set_major_formatter(timestep_formatter)
+
+    plt.tight_layout()
+    plt.show()
+
+    # Average the magnitude of each parameter's change between logged timesteps.
+    def mean_absolute_change(tags):
+        steps = data[tags[0]][0]
+
+        changes = np.stack([
+            np.abs(np.diff(data[tag][1]))
+            for tag in tags
+        ])
+
+        return steps[1:], np.mean(changes, axis=0)
+
+    gates = ("cell", "forget", "input", "output")
+    
+    connections = ("hh", "ih")
+
+    # Figure 3: one mean across four biases for each gate and connection.
+    bias_change_means = {
+        (gate, connection): mean_absolute_change([
+            f"lstm_actor_bias_b_{connection}_{gate}_h{row}"
+            for row in range(4)
+        ])
+
+        for gate in gates
+        for connection in connections
+    }
+
+    weight_change_means = {
+        (gate, connection): mean_absolute_change([
+            f"lstm_actor_weight_w_{connection}_{gate}_h{row}{"h" if connection == "hh" else "i"}{column}"
+            for row in range(4)
+            for column in range(4)
+        ])
+
+        for gate in gates
+        for connection in connections
+    }
+
+    fig3 = plt.figure(figsize=(12, 10))
+
+    ax3_1 = fig3.add_subplot(211)
+    ax3_1.plot(*bias_change_means[("cell", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,g}|}$")
+    ax3_1.plot(*bias_change_means[("cell", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,g}|}$")
+    ax3_1.plot(*bias_change_means[("forget", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,f}|}$")
+    ax3_1.plot(*bias_change_means[("forget", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,f}|}$")
+    ax3_1.plot(*bias_change_means[("input", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,i}|}$")
+    ax3_1.plot(*bias_change_means[("input", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,i}|}$")
+    ax3_1.plot(*bias_change_means[("output", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,o}|}$")
+    ax3_1.plot(*bias_change_means[("output", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,o}|}$")
+    ax3_1.set_ylabel("Bias Change")
+    ax3_1.legend(loc="upper right", ncols=4)
+
+    for legend_line in ax3_1.get_legend().get_lines():
+        legend_line.set_linewidth(2)
+
+    ax3_1.grid()
+    ax3_1.xaxis.set_major_formatter(timestep_formatter)
+
+    ax3_2 = fig3.add_subplot(212)
+    ax3_2.plot(*weight_change_means[("cell", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,g}|}$")
+    ax3_2.plot(*weight_change_means[("cell", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,g}|}$")
+    ax3_2.plot(*weight_change_means[("forget", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,f}|}$")
+    ax3_2.plot(*weight_change_means[("forget", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,f}|}$")
+    ax3_2.plot(*weight_change_means[("input", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,i}|}$")
+    ax3_2.plot(*weight_change_means[("input", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,i}|}$")
+    ax3_2.plot(*weight_change_means[("output", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,o}|}$")
+    ax3_2.plot(*weight_change_means[("output", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,o}|}$")
+    ax3_2.set_xlabel("Timestep")
+    ax3_2.set_ylabel("Weight Change")
+    ax3_2.legend(loc="upper right", ncols=4)
+
+    for legend_line in ax3_2.get_legend().get_lines():
+        legend_line.set_linewidth(2)
+
+    ax3_2.grid()
+    ax3_2.xaxis.set_major_formatter(timestep_formatter)
+
+    plt.tight_layout()
+    #plt.show()
+
+    # Figure 4: average each bias over consecutive 5M-timestep windows.
+    window_size = 5_000_000
+
+    def smooth_bias(series):
+        steps, values = series
+        smoothed_steps = []
+        smoothed_values = []
+
+        for window_start in range(0, int(steps[-1]) + 1, window_size):
+            in_window = (steps >= window_start) & (steps < window_start + window_size)
+            if np.any(in_window):
+                smoothed_steps.append(np.mean(steps[in_window]))
+                smoothed_values.append(np.mean(values[in_window]))
+
+        return np.array(smoothed_steps), np.array(smoothed_values)
+
+    smoothed_biases = {
+        tag: smooth_bias(series)
+        for tag, series in data.items()
+        if tag.startswith("lstm_actor_bias_")
+    }
+
+    # Use smoothed_biases to create the bias change.
+    bias_changes_smoothed = {
+        tag: (steps, np.cumsum(np.diff(values, prepend=values[0])))
+        for tag, (steps, values) in smoothed_biases.items()
+    }
+
+    fig4 = plt.figure(figsize=(12, 10))
+
+    # Plot smoothed biases
+    ax4_1 = fig4.add_subplot(211)
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h0"], linewidth=1, label=r"$b_{h,g,(0)}$")
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h1"], linewidth=1, label=r"$b_{h,g,(1)}$")
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h2"], linewidth=1, label=r"$b_{h,g,(2)}$")
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h3"], linewidth=1, label=r"$b_{h,g,(3)}$")
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_forget_h0"], linewidth=1, label=r"$b_{h,f,(0)}$")
+    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_forget_h1"], linewidth=1, label=r"$b_{h,f,(1)}$")
+    ax4_1.legend(loc="upper left", ncols=4)
+
+    # Plot smoothed bias changes
+    ax4_2 = fig4.add_subplot(212)
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h0"], linewidth=1, label=r"$\Delta b_{h,g,(0)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h1"], linewidth=1, label=r"$\Delta b_{h,g,(1)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h2"], linewidth=1, label=r"$\Delta b_{h,g,(2)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h3"], linewidth=1, label=r"$\Delta b_{h,g,(3)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h0"], linewidth=1, label=r"$\Delta b_{h,f,(0)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h1"], linewidth=1, label=r"$\Delta b_{h,f,(1)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h2"], linewidth=1, label=r"$\Delta b_{h,f,(2)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h3"], linewidth=1, label=r"$\Delta b_{h,f,(3)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h0"], linewidth=1, label=r"$\Delta b_{h,i,(0)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h1"], linewidth=1, label=r"$\Delta b_{h,i,(1)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h2"], linewidth=1, label=r"$\Delta b_{h,i,(2)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h3"], linewidth=1, label=r"$\Delta b_{h,i,(3)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h0"], linewidth=1, label=r"$\Delta b_{h,o,(0)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h1"], linewidth=1, label=r"$\Delta b_{h,o,(1)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h2"], linewidth=1, label=r"$\Delta b_{h,o,(2)}$")
+    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h3"], linewidth=1, label=r"$\Delta b_{h,o,(3)}$")
+    ax4_2.legend(loc="upper left", ncols=4)
+    
+    #plt.show()
+
+
+def plot_pointing_accuracy_histogram(loaded_episodes_list: list, evaluation_labels: list):
+    # Switch to interactive backend for 3D plots
+    matplotlib.use("TkAgg")
+
+    # Extract final error angles from loaded episodes per evaluation
+    final_error_angles_list = []
+    for loaded_episodes in loaded_episodes_list:
+        final_error_angles_list.append([2*np.arccos(np.abs(episode["quaternion"][-1,0])) * 180/np.pi for episode in loaded_episodes])
+
+    # Create histogram bin dimension and weight.
+    bin_width_fine = 0.2
+    bin_width_coarse = 1.0 # 1.0 / 4.0
+    max_angle = max((max(angles) for angles in final_error_angles_list if angles), default=0)
+    num_bins_fine = int(np.floor(max_angle / bin_width_fine)) + 1
+    num_bins_coarse = int(np.floor(max_angle / bin_width_coarse)) + 1
+    bin_edges_fine = np.arange(num_bins_fine) * bin_width_fine
+    bin_edges_coarse = np.arange(num_bins_coarse) * bin_width_coarse
+
+    weights_list = [
+        np.full(len(angles), 100 / len(angles)) if angles else np.array([])
+        for angles in final_error_angles_list
+    ]
+
+    fig1 = plt.figure(figsize=(12, 6))
+    ax1_1 = fig1.add_subplot(211)
+
+    # Plot evaluations side by side within each shared bin.
+    ax1_1.hist(final_error_angles_list, bins=bin_edges_coarse, weights=weights_list,
+               alpha=0.7, label=evaluation_labels, histtype="bar", stacked=False)
+    ax1_1.set_title("Total Range")
+    ax1_1.set_ylabel("Episodes [%]")
+    ax1_1.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
+    ax1_1.xaxis.set_major_locator(MultipleLocator(2)) # 2 / 10
+    ax1_1.grid(axis='y', alpha=0.75)
+    ax1_1.legend(loc="upper right")
+
+    ax1_2 = fig1.add_subplot(212)
+    ax1_2.hist(final_error_angles_list, bins=bin_edges_fine, weights=weights_list,
+                alpha=0.7, label=evaluation_labels, histtype="bar", stacked=False)
+    ax1_2.set_title("Fine Close-Target Range")
+    ax1_2.set_xlabel("Final Attitude Error [deg]")
+    ax1_2.set_ylabel("Episodes [%]")
+    ax1_2.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
+    ax1_2.xaxis.set_major_locator(MultipleLocator(0.2))
+    ax1_2.grid(axis='y', alpha=0.75)
+    ax1_2.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
 
 ### MAIN ###
 if __name__ == "__main__":
@@ -626,24 +953,46 @@ if __name__ == "__main__":
     ]
 
     PHASE_TYPE = Config.Visualization.PHASE_TYPE
+    CONTROLLER = Config.Visualization.CONTROLLER.upper()
 
     time_human = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
-    eval_env = create_evaluation_env(PHASE_TYPE, INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP)
-    model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True)
+    eval_env = create_evaluation_env(PHASE_TYPE, INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, controller=CONTROLLER)
+    model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True) if CONTROLLER == "DRL" else None
 
     """ Uncomment the lines below to run 1 simulation and plot the results. """
-    simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO)
+    simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO, controller=CONTROLLER)
     #visualize_episode_basilisk(simulation_data, show_basilisk_viz=Config.Visualization.SHOW_BASILISK_VIZ)
     viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
     #save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
-    plot_actual_attitude(simulation_data)
+    #plot_actual_attitude(simulation_data)
     #visualize_net_arch(model, eval_env)
-    #plot_for_report(simulation_data, time_end=300)
+    plot_for_report(simulation_data, time_end=300)
+    #plot_tensorboard_data()
 
     """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
         loaded contains ALL episodes, therefore in loaded[] should be the index of the episode you want to plot.
     """
-    #loaded = load_evaluation_data("rewMod224c_ph2_schedPh1to2_7000000_[90.0, 180.0, 0.0, 0.01, 3000, 5.0, 15.0, 1, 1]_ep[100]_2026-08-17-18-30-58.npz")
-    #plot_actual_attitude(loaded[5])
-    #plot_for_report(loaded[0],time_end=300)
+
+    #loaded_0 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-05-17-28-17.npz")
+    #loaded_1 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-05-18-19-17.npz")
+    #loaded_2 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-05-19-15-21.npz")
+    #loaded_3 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-20-15-06.npz")
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_kozMinMargin0_2026-10-05-21-08-08.npz")
+
+    #loaded_0 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-05-11-28-59.npz")
+    #loaded_1 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-05-12-25-31.npz")
+    #loaded_2 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-05-14-01-11.npz")
+    #loaded_3 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-14-56-28.npz")
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_kozMinMargin0_2026-10-05-15-55-56.npz")
+    
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2b_fast_lstm8_kozMinMargin0_schedFullv1c3_53300000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-08-23-31-55.npz")
+    
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2e_fast_lstm8_kozMinMargin0_schedFullv1c3_50000000_[90.0, 110.0, 0.0, 0.01, 3000, 25.0, 30.0, 3, 3]_ep[100]_2026-10-12-18-40-24.npz")
+
+    #plot_actual_attitude(loaded_4[11])
+    #plot_for_report(loaded_4[5],time_end=300)
+    #multiple_loaded = [loaded_0, loaded_1, loaded_2, loaded_3, loaded_4]
+    #evaluation_labels = ["0 KOZs", "1 KOZ"]
+    evaluation_labels = ["0 KOZs", "1 KOZ", "2 KOZs", "3 KOZs", "3 KOZs ($\\Omega_{\\mathrm{margin}} = [0, \\theta]$°)"]
+    #plot_pointing_accuracy_histogram([loaded_4], [evaluation_labels[4]])

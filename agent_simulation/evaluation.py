@@ -21,6 +21,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from agent_training import environment as sat_env
 from agent_training.constants import Constants
 from agent_training.environment import BasiliskRWEnv, scale_torque, rotate_vector_by_quaternion_to_body_frame, LSTM
+from APF_SMC.apf_smc_controller import APFSMCController, APFSMCParams
 from config.config import Config
 
 # Backward compatibility for models saved when trainer.py imported LSTM via
@@ -67,37 +68,56 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
     return model
 
 
-def create_evaluation_env(phase_type, initial_state, model_name, timestep):
+def create_evaluation_env(phase_type, initial_state, model_name, timestep, controller: str = "DRL"):
     """
     Create the evaluation environment.
     Args:
         phase_type: String phase type, e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
+        model_name: Name of the DRL model. Unused for the APF controller.
+        timestep: Training timestep of the DRL model. Unused for the APF controller.
+        controller: Controller to use, either "DRL" (default) or "APF".
     Returns:
         eval_env: The created evaluation environment.
     """
-    vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
+    controller = controller.upper()
+    if controller not in ("DRL", "APF"):
+        raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
 
     eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)])
-    eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
-    eval_env.training = False  # Set to evaluation mode (no normalization updates)
-    eval_env.norm_reward = False  # Do not normalize rewards during evaluation
+
+    if controller == "DRL":
+        vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
+        eval_env = VecNormalize.load(os.path.join(repo_parent_dir, vec_normalize_path), eval_env)
+        eval_env.training = False  # Set to evaluation mode (no normalization updates)
+        eval_env.norm_reward = False  # Do not normalize rewards during evaluation
 
     return eval_env
 
 
-def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False):
+def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False, controller: str = "DRL"):
     """
-    Simulate the agent in the evaluation environment for one episode.
+    Simulate the DRL or APF controller in the evaluation environment for one episode.
+    Both controllers use the environment's Basilisk reaction-wheel dynamics.
     Args:
-        model: The trained model.
+        model: The trained model. Can be None for the APF controller.
         eval_env: The evaluation environment.
         max_steps: Maximum number of steps to simulate.
         model_name: The name of the model being simulated.
         create_video: Whether to create a video of the simulation.
+        controller: Controller to use, either "DRL" (default) or "APF".
     Returns:
         simulation_data: A dictionary containing the simulation data for plotting.
+            The APF controller has no LSTM output (shape: steps x 1 x 0).
     """
+    controller = controller.upper()
+    if controller not in ("DRL", "APF"):
+        raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
+    if controller == "DRL" and model is None:
+        raise ValueError("A trained model is required for the DRL controller.")
+    if max_steps <= 0:
+        raise ValueError("max_steps must be greater than zero.")
+
     # Arrays for storing data
     states = []
     states_koz = []
@@ -112,20 +132,63 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     half_angle_koz_array = eval_env.get_attr("active_koz_config")[0]["half_angle_rad"]
     min_margin_koz = 0
     cnt_Koz_violations = 0
-    zones_mask = eval_env.get_original_obs()["zones_mask"][0]
-    gamma = model.gamma
+    state = eval_env.get_attr("state")[0]
+    zones_mask = state["zones_mask"].copy()
 
-    # Get LSTM
-    policy = getattr(model, "policy") 
-    actor = getattr(policy, "actor")
-    features_extractor_actor: LSTM = getattr(actor, "features_extractor")
+    if controller == "DRL":
+        gamma = model.gamma
+
+        # Get LSTM
+        policy = getattr(model, "policy")
+        actor = getattr(policy, "actor")
+        features_extractor_actor: LSTM = getattr(actor, "features_extractor")
+
+    # APF controller
+    else:
+        gamma = eval_env.get_attr("discount_factor")[0]
+
+        # Tuned parameters for this satellite.
+        apf_params = APFSMCParams(
+            beta2=1.0 * 0.005 * 2,
+            beta1=1.0 * 5 * 0.005 * 2,
+            alpha=0.5, # 2.0
+            sigma=2e-4, # 0.15 + 0.2
+            k=5e-3, # 4.0
+            epsilon=5e-3 # 1e-4
+            )
+
+        # Use the same spacecraft, target attitude and boresight as the DRL environment.
+        I = np.array(eval_env.get_attr("satellite")[0].hub.IHubPntBc_B, dtype=np.float64).reshape(3, 3)
+        qd = np.array([1.0, 0.0, 0.0, 0.0]) # Target attitude quaternion.
+        boresight = eval_env.get_attr("x_axis")[0]
+        forbidden = [(normal_vector, boresight, half_angle)
+                     for normal_vector, half_angle in zip(normal_vector_koz_array, half_angle_koz_array)]
+        apf_controller = APFSMCController.from_cones(I, qd, forbidden=forbidden, params=apf_params)
+        apf_controller.reset(state["satellite"][:4])
 
     # Simulation loop
-    while not done:
-        action, _states = model.predict(obs, deterministic=True)
-        states.append(eval_env.get_original_obs()["satellite"][0])
-        states_koz.append(eval_env.get_original_obs()["zones"][0])
-        lstm_output.append(features_extractor_actor.lstm_out.tolist())
+    contains_inf_torque = False
+    while not done and len(rewards_arr) < max_steps:
+        state = eval_env.get_attr("state")[0]
+
+        if controller == "DRL":
+            action, _states = model.predict(obs, deterministic=True)
+            lstm_output.append(features_extractor_actor.lstm_out.tolist())
+
+        else:
+            # APF returns body torque. Reaction wheel motor torque has the opposite sign.
+            torque, _info = apf_controller.compute(state["satellite"][:4], state["satellite"][4:7])
+            #print("torque=",torque)
+            if not np.all(np.isfinite(torque)):
+                contains_inf_torque = True
+                
+            action = np.clip(-torque / scale_torque, -1.0, 1.0)[None, :]
+
+            # Store an empty pseudo LSTM output for the APF controller to maintain consistent data structure.
+            lstm_output.append(np.empty((1, 0)))
+
+        states.append(state["satellite"].copy())
+        states_koz.append(state["zones"].copy())
 
         # Step the environment
         obs, rewards, dones, infos = eval_env.step(action)
@@ -143,6 +206,13 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         if create_video:
             frame = eval_env.render()
             frames.append(frame)
+
+    if not done:
+        min_margin_koz = eval_env.get_attr("min_margin_koz")[0] * 180 / np.pi
+        cnt_Koz_violations = eval_env.get_attr("entered_koz_count")[0]
+
+    if contains_inf_torque:
+        print("WARNING: APF torque is not finite.")
 
     # Save as MP4
     timestamp = time.time()
@@ -197,26 +267,29 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     return simulation_data
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int):
+def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int, controller: str = "DRL"):
     """
-    Worker function to evaluate agent for a subset of episodes.
+    Worker function to evaluate the DRL or APF controller for a subset of episodes.
     This function will be run in parallel by multiple processes.
     Args:
-        model_name: Name of the model file (without .zip extension).
-        timestep: Timestep for evaluation.
+        model_name: Name of the model file (without .zip extension) or APF evaluation label.
+        timestep: Training timestep of the DRL model. Unused for the APF controller.
         phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Number of episodes to run.
         worker_id: ID of this worker process.
+        controller: Controller to use, either "DRL" (default) or "APF".
     Returns:
         Dictionary containing evaluation results.
     """
-    # Load model in worker process
-    model = load_agent(model_name, timestep)
+    controller = controller.upper()
+
+    # Load model in worker process for the DRL controller.
+    model = load_agent(model_name, timestep) if controller == "DRL" else None
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(phase_type, initial_state, model_name, timestep)
+    eval_env = create_evaluation_env(phase_type, initial_state, model_name, timestep, controller=controller)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -230,7 +303,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
         print(f"Worker {worker_id}: Episode {episode+1}/{episodes}...", end="\r")
         
         # Simulate one episode
-        episode_data = simulate_episode(model, eval_env, max_steps, model_name, create_video=False)
+        episode_data = simulate_episode(model, eval_env, max_steps, model_name, create_video=False, controller=controller)
 
         # Append data of this episode to all episodes data for this worker
         simulation_data.append(episode_data)
@@ -266,19 +339,24 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4):
+def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4, controller: str = "DRL", apf_params: APFSMCParams = None):
     """
-    Simulate the agent in parallel using multiple processes and saves the data at the end.
+    Simulate the DRL or APF controller in parallel using multiple processes and save the data at the end.
     Args:
-        model_name: Name of the model file (without .zip extension).
-        timestep: Timestep for evaluation.
+        model_name: Name of the model file (without .zip extension) or APF evaluation label.
+        timestep: Training timestep of the DRL model. Unused for the APF controller.
         phase_type: String phase type e.g. phase 1, 2, transition etc.
         initial_state: Initial state configuration for environment.
         max_steps: Maximum steps per episode.
         episodes: Total number of episodes to run.
         num_workers: Number of parallel worker processes (default: 4).
+        controller: Controller to use, either "DRL" (default) or "APF".
     """
     import multiprocessing as mp
+
+    controller = controller.upper()
+    if controller not in ("DRL", "APF"):
+        raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
     
     # Divide episodes among workers
     episodes_per_worker = episodes // num_workers
@@ -289,7 +367,7 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
     for i in range(remaining_episodes):
         episode_counts[i] += 1
     
-    print(f"Running {episodes} episodes across {num_workers} workers...")
+    print(f"Running {episodes} episodes with {controller} across {num_workers} workers...")
     print(f"Episodes per worker: {episode_counts}")
     print()
     
@@ -300,7 +378,7 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
         for worker_id in range(num_workers):
             result = pool.apply_async(
                 evaluate_agent_worker,
-                args=(model_name, timestep, phase_type, initial_state, max_steps, episode_counts[worker_id], worker_id)
+                args=(model_name, timestep, phase_type, initial_state, max_steps, episode_counts[worker_id], worker_id, controller)
             )
             results.append(result)
         
@@ -332,7 +410,10 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
 
     # Save episode data
     time_iso = time.strftime("%Y-%m-%d-%H-%M-%S")
-    save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_ep[{episodes}]_{time_iso}.npz")
+    if controller == "DRL":
+        save_path = os.path.join(eval_data_dir, f"{model_name}_{timestep}_{initial_state}_ep[{episodes}]_{time_iso}.npz")
+    else:
+        save_path = os.path.join(eval_data_dir, f"{model_name}_APF_{initial_state}_ep[{episodes}]_{time_iso}.npz")
     np.savez(save_path, data=np.array(simulation_data), dtype=object)
 
     calc_metrics(simulation_data)
@@ -377,7 +458,7 @@ def calc_metrics(data: list):
 
         for idx, quat in enumerate(episode_data["quaternion"]):
             err_angle = 2 * np.arccos(np.abs(quat[0])) * 180/np.pi
-            if err_angle <= 0.25:
+            if err_angle <= 1.0:
                 if not tmp_settled:
                     tmp_settling_time = idx * Constants.TIME_DELTA
                 tmp_settled = True
@@ -435,7 +516,7 @@ def load_evaluation_data(file_name: str):
     settled_count = 0
     settled_final_err = []
 
-    # for i, episode_data in enumerate(data):
+    for i, episode_data in enumerate(data):
     #     if np.mean(np.linalg.norm(episode_data["torques"], axis=1)) > 0.0004 and episode_data["cnt_Koz_violations"] > 0:
     #         #print(i,end=",")
     #         pass
@@ -473,9 +554,9 @@ def load_evaluation_data(file_name: str):
     #         pass
         
     #     # Violation
-    #     if episode_data["cnt_Koz_violations"] > 0:
-    #         #print(i,end=",")
-    #         pass
+        if episode_data["cnt_Koz_violations"] > 0:
+            print(i,end=",")
+            pass
 
     #     if episode_data["cumulative_rewards"][-1] < -2800:
     #         pass
@@ -546,13 +627,13 @@ if __name__ == "__main__":
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
     """
-    #loaded = load_evaluation_data("test_lstm_ph1_1_2900000_[0.0, 180.0, 0.0, 0.01, 3000, 0.0, 0.0]_ep[1000]_2026-06-28-10-28-42.npz")
+    #loaded = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-20-15-06.npz")
     #calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8, controller=Config.Evaluation.CONTROLLER)
     t_end = time.time()
 
     print()
