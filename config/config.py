@@ -32,6 +32,7 @@ class Config():
         MODEL_NAME = config_data["training"]["MODEL_NAME"]
 
     class Evaluation():
+        CONTROLLER = config_data["evaluation"].get("CONTROLLER", "DRL")
         MODEL_NAME = config_data["evaluation"]["MODEL_NAME"]
         TIMESTEP = config_data["evaluation"]["TIMESTEP"]
         PHASE_TYPE = config_data["evaluation"]["PHASE_TYPE"]
@@ -46,6 +47,7 @@ class Config():
         MAX_NR_KOZ = config_data["evaluation"]["MAX_NR_KOZ"]
 
     class Visualization():
+        CONTROLLER = config_data["visualization"].get("CONTROLLER", "DRL")
         MODEL_NAME = config_data["visualization"]["MODEL_NAME"]
         TIMESTEP = config_data["visualization"]["TIMESTEP"]
         PHASE_TYPE = config_data["visualization"]["PHASE_TYPE"]

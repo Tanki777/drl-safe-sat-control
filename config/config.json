@@ -10,39 +10,41 @@
     },
 
     "training": {
-        "MODEL_NAME": "rewMod224c1_fast_ph1_schedPh1v5ep100",
-        "SCHEDULE_FILE_NAME": "ph1v5ep100.json",
+        "MODEL_NAME": "rewMod224ph2c2a_fast_noLSTM_kozMinMargin0_schedfullv1c3a",
+        "SCHEDULE_FILE_NAME": "fullv1c3a.json",
         "CONTINUE_TRAINING": false
     },
 
     "evaluation": {
-        "MODEL_NAME": "rewMod224ph2a_schedFullv1_fixedKozNorm",
+        "CONTROLLER": "DRL",
+        "MODEL_NAME": "rewMod224ph2c2f_fast_lstm8_kozMinMargin0_schedFullv1c3",
         "PHASE_TYPE": "phase 2",
-        "TIMESTEP": 10800000,
+        "TIMESTEP": 49900000,
         "MAX_STEPS": 3000,
         "MIN_INITIAL_ERROR_ANGLE": 90.0,
-        "MAX_INITIAL_ERROR_ANGLE": 180.0,
+        "MAX_INITIAL_ERROR_ANGLE": 91.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 5.0,
-        "MAX_HALF_ANGLE_KOZ": 15.0,
-        "MIN_NR_KOZ": 1,
+        "MIN_HALF_ANGLE_KOZ": 25.0,
+        "MAX_HALF_ANGLE_KOZ": 30.0,
+        "MIN_NR_KOZ": 3,
         "MAX_NR_KOZ": 3
     },
 
     "visualization": {
-        "MODEL_NAME": "rewMod224c1_fast_ph1_schedPh1v5ep100",
-        "PHASE_TYPE": "phase 1",
-        "TIMESTEP": 4500000,
-        "MAX_STEPS": 1000,
-        "MIN_INITIAL_ERROR_ANGLE": 170.0,
-        "MAX_INITIAL_ERROR_ANGLE": 171.0,
+        "CONTROLLER": "DRL",
+        "MODEL_NAME": "rewMod224ph2c2g_fast_lstm8_kozMinMargin0_schedFullv1c3",
+        "PHASE_TYPE": "phase 2",
+        "TIMESTEP": 4100000,
+        "MAX_STEPS": 3000,
+        "MIN_INITIAL_ERROR_ANGLE": 90.0,
+        "MAX_INITIAL_ERROR_ANGLE": 100.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
-        "MIN_HALF_ANGLE_KOZ": 0.0,
-        "MAX_HALF_ANGLE_KOZ": 0.0,
-        "MIN_NR_KOZ": 0,
-        "MAX_NR_KOZ": 0,
+        "MIN_HALF_ANGLE_KOZ": 40.0,
+        "MAX_HALF_ANGLE_KOZ": 40.0,
+        "MIN_NR_KOZ": 1,
+        "MAX_NR_KOZ": 1,
         "CREATE_VIDEO": false,
         "SHOW_BASILISK_VIZ": false,
         "VIZARD_EXE_PATH": "C:\\Program Files (x86)\\Vizard\\Vizard.exe"
@@ -57,8 +59,8 @@
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.0,
         "MIN_HALF_ANGLE_KOZ": 30.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
-        "MIN_NR_KOZ": 3,
-        "MAX_NR_KOZ": 3
+        "MIN_NR_KOZ": 1,
+        "MAX_NR_KOZ": 1
     }
 }
 
