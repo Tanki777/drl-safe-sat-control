@@ -151,10 +151,10 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         apf_params = APFSMCParams(
             beta2=1.0 * 0.005 * 2,
             beta1=1.0 * 5 * 0.005 * 2,
-            alpha=0.5, # 2.0
-            sigma=2e-4, # 0.15 + 0.2
-            k=5e-3, # 4.0
-            epsilon=5e-3 # 1e-4
+            alpha=2.0, # 2.0 default, 0.5 test, 2.0 rec
+            sigma=2e-4, # 0.15 + 0.2 default, 2e-4 test
+            k=5e-3, # 4.0 default, 5e-3 test, 0.5 rec
+            epsilon=5e-3 # 1e-4 default, 5e-3 test
             )
 
         # Use the same spacecraft, target attitude and boresight as the DRL environment.
@@ -633,7 +633,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=100, num_workers=8, controller=Config.Evaluation.CONTROLLER)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
     t_end = time.time()
 
     print()
