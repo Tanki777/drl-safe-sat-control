@@ -88,7 +88,7 @@ def create_evaluation_env(phase_type: str, initial_state: list, model_name: str,
     return eval_env
 
 
-def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False, controller: str = "DRL") -> dict:
+def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, controller: str = "DRL") -> dict:
     """
     Simulate the DRL or APF controller in the evaluation environment for one episode.
     Both controllers use the environment's Basilisk reaction-wheel dynamics.
@@ -97,8 +97,6 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         model (SAC): The trained model. Can be None for the APF controller.
         eval_env (BasiliskRWEnv): The evaluation environment.
         max_steps (int): Maximum number of steps to simulate.
-        model_name (str): The name of the model being simulated.
-        create_video (bool): Whether to create a video of the simulation.
         controller (str): Controller to use, either "DRL" (default) or "APF".
     Returns:
         simulation_data (dict): A dictionary containing the simulation data for plotting.
@@ -196,11 +194,6 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         if done:
             min_margin_koz = info["custom_metrics/min_margin_koz"]
             cnt_Koz_violations = info["custom_metrics/entered_koz_count"]
-        
-        # Render the environment and store the frame for video
-        if create_video:
-            frame = eval_env.render()
-            frames.append(frame)
 
     if not done:
         min_margin_koz = eval_env.get_attr("min_margin_koz")[0] * 180 / np.pi
