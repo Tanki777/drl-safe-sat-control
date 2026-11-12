@@ -8,6 +8,7 @@ import json
 import os
 import time
 import sys
+from stable_baselines3 import SAC
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,7 @@ if _drl_repo_dir not in sys.path:
 
 from agent_training import trainer
 from config.config import Config
+from agent_training.environment import BasiliskRWEnv
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
@@ -38,15 +40,16 @@ if not os.path.exists(meta_dir):
     os.makedirs(meta_dir)
 
 
-def load_schedule(schedule_file_name):
+def load_schedule(schedule_file_name: str) -> dict:
     """
     Loads a training schedule.
     
     Args:
-        schedule_file_name: Name of the schedule file (e.g., "phase1.json")
+        schedule_file_name (str): Name of the schedule file (e.g., "phase1.json")
     Returns:
-        schedule: Loaded schedule dictionary
+        schedule (dict): Loaded schedule dictionary
     """
+
     schedule_file = os.path.join(schedule_dir, schedule_file_name)
     try:
         with open(schedule_file, 'r') as f:
@@ -60,14 +63,16 @@ def load_schedule(schedule_file_name):
     return schedule
 
 
-def load_model_metadata(model_name):
+def load_model_metadata(model_name: str) -> dict:
     """
     Try to load model metadata file. If not found, exit the program.
+
     Args:
-        model_name: Name of the model whose metadata to load
+        model_name (str): Name of the model whose metadata to load
     Returns:
-        metadata: Loaded metadata dictionary
+        metadata (dict): Loaded metadata dictionary
     """
+
     metadata_file = os.path.join(meta_dir, f"{model_name}.meta")
     try:
         with open(metadata_file, 'r') as f:
@@ -82,15 +87,17 @@ def load_model_metadata(model_name):
     return metadata
 
 
-def create_model_metadata(model_name, schedule, model):
+def create_model_metadata(model_name: str, schedule: dict, model) -> dict:
     """
     Create model metadata based on the schedule.
+
     Args:
-        model_name: Name of the model for which to create metadata
-        schedule: The schedule dictionary to use for metadata creation
+        model_name (str): Name of the model for which to create metadata
+        schedule (dict): The schedule dictionary to use for metadata creation
     Returns:
-        metadata: Created metadata dictionary
+        metadata (dict): Created metadata dictionary
     """
+
     # Create meta header
     metadata = {
         "model_name": model_name,
@@ -139,33 +146,36 @@ def create_model_metadata(model_name, schedule, model):
     return metadata
 
 
-def save_model_metadata(model_name, metadata):
+def save_model_metadata(model_name: str, metadata: dict) -> None:
     """
     Save model metadata to a file.
+
     Args:
-        model_name: Name of the model for which to save metadata
-        metadata: The metadata dictionary to save
+        model_name (str): Name of the model for which to save metadata
+        metadata (dict): The metadata dictionary to save
     
     """
+
     # Save metadata to file
     metadata_file = os.path.join(meta_dir, f"{model_name}.meta")
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=4)
 
 
-def create_or_load_model(continue_training, model_name, env):
+
+def create_or_load_model(continue_training: bool, model_name: str, env: BasiliskRWEnv) -> tuple[SAC, str, str]:
     """
     Create a new model or load an existing one based on the continue_training flag.
+
     Args:
-        continue_training: Boolean flag indicating whether to continue training an existing model
-        model_name: Name of the model to create or load
-        env: The training environment to use for model creation or loading
+        continue_training (bool): Boolean flag indicating whether to continue training an existing model
+        model_name (str): Name of the model to create or load
+        env (BasiliskRWEnv): The training environment to use for model creation or loading
     Returns:
-        res: A tuple containing:
-        model: The created or loaded model
-        save_path: The path where the model is saved
-        latest_model_path: The path to the latest model file
+        model, save_path, latest_model_path (tuple[SAC, str, str]): The created or loaded model, 
+            the path to save the model, and the path to the latest model.
     """
+
     # Load model and metadata
     if continue_training:
         model, save_path, latest_model_path = trainer.create_or_load_model(env, continue_training, model_name, trainer.log_path)
@@ -173,17 +183,20 @@ def create_or_load_model(continue_training, model_name, env):
     # Create new model and metadata
     else:
         model, save_path, latest_model_path = trainer.create_or_load_model(env, continue_training, model_name, trainer.log_path)
+
     return model, save_path, latest_model_path
 
 
-def do_scheduled_training(model_name, schedule, continue_training):
+def do_scheduled_training(model_name: str, schedule: dict, continue_training: bool) -> None:
     """
     Perform scheduled training based on the provided schedule and parameters.
+
     Args:
-        model_name: Name of the model to train
-        schedule: The schedule dictionary containing training phases
-        continue_training: Boolean flag indicating whether to continue training an existing model
+        model_name (str): Name of the model to train
+        schedule (dict): The schedule dictionary containing training phases
+        continue_training (bool): Boolean flag indicating whether to continue training an existing model
     """
+    
     # Get training phases
     phases = schedule.get("phases", [])
     phase_count = len(phases)
