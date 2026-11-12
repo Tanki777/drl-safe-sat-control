@@ -44,10 +44,7 @@
         "MIN_HALF_ANGLE_KOZ": 15.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
         "MIN_NR_KOZ": 0,
-        "MAX_NR_KOZ": 0,
-        "CREATE_VIDEO": false,
-        "SHOW_BASILISK_VIZ": false,
-        "VIZARD_EXE_PATH": "C:\\Program Files (x86)\\Vizard\\Vizard.exe"
+        "MAX_NR_KOZ": 0
     },
 
     "env_simulator": {
