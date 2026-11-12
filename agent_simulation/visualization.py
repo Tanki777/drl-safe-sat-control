@@ -6,7 +6,6 @@ Author: Cemal Yilmaz - 2026
 
 import os
 import sys
-import subprocess
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import FuncFormatter, MultipleLocator
@@ -14,10 +13,6 @@ import numpy as np
 import datetime
 import visualtorch
 import torch as th
-from pathlib import Path
-from Basilisk.utilities import SimulationBaseClass, macros, vizSupport
-from Basilisk.simulation import spacecraft, vizInterface, simpleInstrument
-from Basilisk.architecture import sysModel, messaging
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,67 +22,37 @@ if _drl_repo_dir not in sys.path:
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
 repo_parent_dir = os.path.dirname(repo_dir)
-video_dir = os.path.join(repo_parent_dir, "videos")
-viz_dir = os.path.join(repo_parent_dir, "viz_files")
-
-# Create video directory if it doesn't exist
-if not os.path.exists(video_dir):
-    os.makedirs(video_dir)
-
-# Create viz directory if it does not exist
-if not os.path.exists(viz_dir):
-    os.makedirs(viz_dir)
-
 
 from agent_training.constants import Constants
-from agent_training.environment import quatToMRP
 from agent_simulation.evaluation import create_evaluation_env, load_agent, load_evaluation_data, simulate_episode
 from config.config import Config
 
 
-def _rotation_matrix_from_quaternion(quaternion):
-    """Return the body-to-inertial rotation matrix for a [w, x, y, z] quaternion."""
-    q0, q1, q2, q3 = quaternion
-
-    return np.array([
-        [1 - 2 * (q2 * q2 + q3 * q3), 2 * (q1 * q2 - q3 * q0), 2 * (q1 * q3 + q2 * q0)],
-        [2 * (q1 * q2 + q3 * q0), 1 - 2 * (q1 * q1 + q3 * q3), 2 * (q2 * q3 - q1 * q0)],
-        [2 * (q1 * q3 - q2 * q0), 2 * (q2 * q3 + q1 * q0), 1 - 2 * (q1 * q1 + q2 * q2)],
-    ])
-
-
-def _normalize_vector(vector):
-    vector = np.asarray(vector, dtype=np.float64)
-    norm = np.linalg.norm(vector)
-
-    if norm < 1e-12:
-        return vector
-    
-    return vector / norm
-
-
-def print_result(phi_final, omega_final, cumulative_reward_final):
+def print_result(phi_final: float, omega_final: np.ndarray, cumulative_reward_final: float) -> None:
     """
-    Print the final results of the evaluation in a readable format.
+    Print the final results of the evaluation.
+
+    Args:
+        phi_final (float): Final rotation angle in degrees.
+        omega_final (ndarray): Final angular velocity as a numpy array [omega_x, omega_y, omega_z].
+        cumulative_reward_final (float): Total cumulative reward during the episode.
     """
+
     print(f"Final rotation angle: {phi_final:.6f}°")
     print(f"Final angular velocity: {np.sqrt(omega_final[0]**2 + omega_final[1]**2 + omega_final[2]**2)*180/np.pi:.6f} deg/s")
     print(f"Total cumulative reward: {cumulative_reward_final:.2f}")
-    print(f"Target accuracy: 0.25°")
-    print(f"Attitude control: {"SUCCESS" if phi_final < 0.25 else "NOT CONVERGED"}")
-    print(f"Velocity settling: {"SUCCESS" if np.sqrt(omega_final[0]**2 + omega_final[1]**2 + omega_final[2]**2)*180/np.pi < 0.5 else "NOT SETTLED"}")
 
 
-def quat_to_axis_angle(q):
+def quat_to_axis_angle(q: list) -> tuple[np.ndarray, float]:
         """
-        Convert quaternion to rotation axis and angle.
+        Converts quaternion to rotation axis and angle.
+
         Args:
-            q: Quaternion as a list or array [q0, q1, q2, q3]
+            q (list): Quaternion as a list or array [q0, q1, q2, q3]
         Returns:
-            res: A tuple containing:
-            axis: Rotation axis as a numpy array [x, y, z]
-            angle: Rotation angle in radians
+            axis, angle (ndarray, float): Tuple containing rotation axis and angle (rad).
         """
+
         q0, q1, q2, q3 = q
         
         # Angle phi = 2 * arccos(|q0|) (same as in reward function)
@@ -103,11 +68,12 @@ def quat_to_axis_angle(q):
         return axis, angle
 
 
-def plot_actual_attitude(simulation_data: dict):
+def plot_actual_attitude(simulation_data: dict) -> None:
     """
     Plot the satellite attitude trajectory based on rotation axis and angle phi.
+
     Args:
-        simulation_data: A dictionary containing the simulation data for plotting.
+        simulation_data (dict): A dictionary containing the simulation data for plotting.
     """
     
     # Switch to interactive backend for 3D plots
@@ -119,15 +85,12 @@ def plot_actual_attitude(simulation_data: dict):
     omega_w_x, omega_w_y, omega_w_z = simulation_data["omega_wheels"][:, 0], simulation_data["omega_wheels"][:, 1], simulation_data["omega_wheels"][:, 2]
     norm_q = simulation_data["quaternion_norm"]
     torques_array = simulation_data["torques"]
-    rewards_array = simulation_data["rewards"]
-    rewards_discounted_array = simulation_data["rewards_discounted"]
     cumulative_rewards = simulation_data["cumulative_rewards"]
     cumulative_rewards_discounted = simulation_data["cumulative_rewards_discounted"]
     times = simulation_data["times"]
     normal_vector_koz_array = simulation_data["normal_vector_koz_array"] # normal vector in world frame
     half_angle_koz_array = simulation_data["half_angle_koz_array"]
     margin_angles_koz = simulation_data["margin_angles_koz"]
-    direction_koz = simulation_data["direction_koz"] # normal vector in body frame
     min_margin_koz = simulation_data["min_margin_koz"]
     cnt_Koz_violations = simulation_data["cnt_Koz_violations"]
     lstm_output = simulation_data["lstm_output"]
@@ -175,7 +138,7 @@ def plot_actual_attitude(simulation_data: dict):
     
     fig = plt.figure(figsize=(18, 12))
     
-    # 3D Rotation Axis Trajectory (This is the key trajectory for phi angle!)
+    # 3D Rotation Axis Trajectory
     ax1 = fig.add_subplot(341, projection="3d")
     
     # Plot trajectory on unit sphere (rotation axes are unit vectors)
@@ -184,15 +147,23 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.scatter(body_axis_arr[-1, 0], body_axis_arr[-1, 1], body_axis_arr[-1, 2], color="red", s=100, label="End")
     ax1.scatter(1, 0, 0, color="gold", s=150, marker="*", label="Target")
 
-    def _generate_keep_out_zone_circles():
-        # Create circle points for the keep out zone
+    def _generate_keep_out_zone_circles() -> list[np.ndarray]:
+        """ 
+        Create circle points for the keep out zone.
 
+        Returns:
+            circle_points_array (list): List of arrays containing circle points for each keep out zone.
+        """
+
+        # Generate angle values for the circle.
         theta = np.linspace(0, 2 * np.pi, 100)
         circle_points_array = []
 
+        # For each KOZ...
         for idx in range(len(normal_vector_koz_array)):
             circle_points = []
 
+            # For each angle in the circle, generate the corresponding point on the unit sphere.
             for angle in theta:
                 # Generate points on the circle in the plane perpendicular to the normal vector
                 v = np.array([np.cos(angle), np.sin(angle), 0])
@@ -246,7 +217,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.set_title("3D Boresight Trajectory on Unit Sphere")
     ax1.legend()
     
-    # Rotation angle φ vs time (same as in reward function)
+    # Rotation angle phi vs time (same as in reward function)
     ax2 = fig.add_subplot(342)
     ax2.plot(times[:len(rotation_angles_deg)], rotation_angles_deg, "purple", linewidth=3, label="Angle $\\phi$")
     ax2.axhline(y=0.25, color="r", linestyle="--", linewidth=2, label="Accuracy Threshold (0.25°)")
@@ -319,28 +290,19 @@ def plot_actual_attitude(simulation_data: dict):
     ax7.legend()
     ax7.grid()
 
-    # Plot keep out zone direction vector (body frame)
-    ax8 = fig.add_subplot(349)
-    ax8.plot(times, direction_koz[:, 0, 0], label="x") # TODO: support multiple KOZs
-    ax8.plot(times, direction_koz[:, 0, 1], label="y") # TODO: support multiple KOZs
-    ax8.plot(times, direction_koz[:, 0, 2], label="z") # TODO: support multiple KOZs
-    ax8.set_title("Keep Out Zone Direction Vector (Body Frame)")
-    ax8.legend()
-    ax8.grid()
-
     # Plot LSTM output if available.
-    ax9 = fig.add_subplot(3,4,10)
+    ax8 = fig.add_subplot(349)
     if lstm_output.shape[-1] > 0:
-        ax9.plot(times, lstm_output[:, 0, 0], label="$h_0$")
-        ax9.plot(times, lstm_output[:, 0, 1], label="$h_1$")
-        ax9.plot(times, lstm_output[:, 0, 2], label="$h_2$")
-        ax9.plot(times, lstm_output[:, 0, 3], label="$h_3$")
-        ax9.set_title("LSTM Output (Hidden States)")
-        ax9.legend()
+        ax8.plot(times, lstm_output[:, 0, 0], label="$h_0$")
+        ax8.plot(times, lstm_output[:, 0, 1], label="$h_1$")
+        ax8.plot(times, lstm_output[:, 0, 2], label="$h_2$")
+        ax8.plot(times, lstm_output[:, 0, 3], label="$h_3$")
+        ax8.set_title("LSTM Output (Hidden States)")
+        ax8.legend()
     else:
-        ax9.set_title("APF Controller (No LSTM)")
-        ax9.set_axis_off()
-    ax9.grid()
+        ax8.set_title("APF Controller (No LSTM)")
+        ax8.set_axis_off()
+    ax8.grid()
     
     plt.tight_layout()
     plt.show()
@@ -348,17 +310,15 @@ def plot_actual_attitude(simulation_data: dict):
     print("Initial rotation angle:", rotation_angles_deg[0], "degrees")
 
     print_result(rotation_angles_deg[-1], simulation_data["omega"][-1], cumulative_rewards[-1])
-    
-    return 
 
 
-def plot_for_report(simulation_data: dict, time_end=300):
+def plot_for_report(simulation_data: dict, time_end=300) -> None:
     """
     Plot the data and arrange it for report format.
 
     Args:
-        simulation_data: A dictionary containing the simulation data for plotting.
-        time_end: The end time for the plots (default: 300 seconds).
+        simulation_data (dict): A dictionary containing the simulation data for plotting.
+        time_end (float): The end time for the plots (default: 300 seconds).
     """
     
     # Switch to interactive backend for 3D plots
@@ -367,22 +327,15 @@ def plot_for_report(simulation_data: dict, time_end=300):
     # Parse quaternion and angular velocity components
     q_0, q_1, q_2, q_3 = simulation_data["quaternion"][:, 0], simulation_data["quaternion"][:, 1], simulation_data["quaternion"][:, 2], simulation_data["quaternion"][:, 3]
     omega_x, omega_y, omega_z = simulation_data["omega"][:, 0], simulation_data["omega"][:, 1], simulation_data["omega"][:, 2]
-    omega_w_x, omega_w_y, omega_w_z = simulation_data["omega_wheels"][:, 0], simulation_data["omega_wheels"][:, 1], simulation_data["omega_wheels"][:, 2]
-    norm_q = simulation_data["quaternion_norm"]
     torques_array = simulation_data["torques"]
-    rewards_array = simulation_data["rewards"]
-    rewards_discounted_array = simulation_data["rewards_discounted"]
     cumulative_rewards = simulation_data["cumulative_rewards"]
-    cumulative_rewards_discounted = simulation_data["cumulative_rewards_discounted"]
     times = simulation_data["times"]
     normal_vector_koz_array = simulation_data["normal_vector_koz_array"] # normal vector in world frame
     half_angle_koz_array = simulation_data["half_angle_koz_array"]
     margin_angles_koz = simulation_data["margin_angles_koz"]
-    direction_koz = simulation_data["direction_koz"] # normal vector in body frame
     min_margin_koz = simulation_data["min_margin_koz"]
     cnt_Koz_violations = simulation_data["cnt_Koz_violations"]
-    lstm_output = simulation_data["lstm_output"]
-
+    
     print("Minimum margin KOZ:", min_margin_koz, "degrees")
     print("Count KOZ violations:", cnt_Koz_violations)
     for idx, angle in enumerate(half_angle_koz_array):
@@ -431,9 +384,6 @@ def plot_for_report(simulation_data: dict, time_end=300):
     # 3D Rotation Axis Trajectory (This is the key trajectory for phi angle!)
     ax1 = fig1.add_subplot(111, projection="3d")
     
-    # Adjust subplot to fill more of the figure space
-    #fig1.subplots_adjust(left=0, right=5, top=5, bottom=0)
-    
     # Plot trajectory on unit sphere (rotation axes are unit vectors)
     ax1.plot(body_axis_arr[:, 0], body_axis_arr[:, 1], body_axis_arr[:, 2], "b-", alpha=0.7, linewidth=3, label="Boresight Trajectory")
     ax1.scatter(body_axis_arr[0, 0], body_axis_arr[0, 1], body_axis_arr[0, 2], color="green", s=50, label="Start")
@@ -442,15 +392,22 @@ def plot_for_report(simulation_data: dict, time_end=300):
     # Plot target last with higher zorder to ensure it's always on top
     ax1.scatter(1, 0, 0, color="gold", s=200, marker="*", label="Target", zorder=1000, edgecolors='black', linewidths=1)
 
-    def _generate_keep_out_zone_circles():
-        # Create circle points for the keep out zone
-
+    def _generate_keep_out_zone_circles() -> list[np.ndarray]:
+        """
+        Create circle points for the keep out zone
+        
+        Returns:
+            circle_points_array (list): List of arrays containing circle points for each keep out zone.
+        """
+        
         theta = np.linspace(0, 2 * np.pi, 100)
         circle_points_array = []
 
+        # For each KOZ...
         for idx in range(len(normal_vector_koz_array)):
             circle_points = []
 
+            # For each angle in the circle, generate the corresponding point on the unit sphere.
             for angle in theta:
                 # Generate points on the circle in the plane perpendicular to the normal vector
                 v = np.array([np.cos(angle), np.sin(angle), 0])
@@ -546,13 +503,13 @@ def plot_for_report(simulation_data: dict, time_end=300):
     ax5.set_ylabel("Ang. Velocity [deg/s]")
     ax5.legend(loc="upper right")
     ax5.grid()
-    # Plot torque input
+
+    # Plot torque
     ax6 = fig2.add_subplot(514)
     ax6.plot(times, torques_array[:, 0], label="$\\tau_1$")
     ax6.plot(times, torques_array[:, 1], label="$\\tau_2$")
     ax6.plot(times, torques_array[:, 2], label="$\\tau_3$")
     ax6.set_ylabel("Torque [Nm]")
-    #ax6.set_xlabel("Time [s]")
     ax6.legend(loc="upper right")
     ax6.grid()
 
@@ -573,60 +530,11 @@ def plot_for_report(simulation_data: dict, time_end=300):
     return
 
 
-def visualize_net_arch(model, env):
-    policy = model.policy
-    observation_space = getattr(env, "observation_space", None)
-
-    if observation_space is None:
-        raise ValueError("Could not infer observation space from env or model.")
-
-    obs_keys = list(observation_space.spaces.keys())
-    input_shape = tuple(
-        (1, *observation_space.spaces[key].shape)
-        for key in obs_keys
-    )
-
-    class PolicyObservationAdapter(th.nn.Module):
-        def __init__(self, policy, obs_keys):
-            super().__init__()
-            self.actor = policy.actor
-            self.obs_keys = obs_keys
-
-        def forward(self, *obs_parts):
-            observations = dict(zip(self.obs_keys, obs_parts))
-            sat_obs = observations["satellite"]
-            zones_obs = observations["zones"]
-
-            # Ensure the LSTM path is included in the rendered graph.
-            if "zones_mask" in observations:
-                zones_mask = th.ones_like(observations["zones_mask"])
-                zones_obs = zones_obs * zones_mask.unsqueeze(-1)
-
-            features_extractor = self.actor.features_extractor
-            _, (hidden_state_out, _) = features_extractor.lstm(zones_obs)
-            features = th.cat([sat_obs, hidden_state_out[-1]], dim=1)
-
-            latent_pi = self.actor.latent_pi(features)
-            mean_actions = self.actor.mu(latent_pi)
-
-            log_std = self.actor.log_std(latent_pi)
-            return th.cat([mean_actions, log_std], dim=1)
-        
-    op = visualtorch.GraphStyleOptions()
-
-    print(policy)
-        
-    img = visualtorch.render(
-        PolicyObservationAdapter(policy, obs_keys),
-        input_shape=input_shape,
-        style="graph",
-        show_dimension=True,
-        show_arrows=True
-    )
-    img.save("net_arch_test.png")
-
-
 def plot_tensorboard_data():
+    """
+    Read tensorboard CSV data and plot metrics.
+    """
+
     # Switch to interactive backend for 3D plots
     matplotlib.use("TkAgg")
 
@@ -724,7 +632,6 @@ def plot_tensorboard_data():
     ax2_3.plot(*data["custom_entered_koz_count_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[20,20+\theta]°$")
     ax2_3.plot(*data_2["custom_entered_koz_count_mean"], linewidth=1, label=r"$\Omega_\mathrm{margin}=[0,\theta]°$")
     ax2_3.set_ylabel("Entered KOZ Count")
-    #ax2_3.set_yscale("log")
     ax2_3.legend(loc="upper right")
     ax2_3.grid()
 
@@ -743,149 +650,16 @@ def plot_tensorboard_data():
     plt.tight_layout()
     plt.show()
 
-    # Average the magnitude of each parameter's change between logged timesteps.
-    def mean_absolute_change(tags):
-        steps = data[tags[0]][0]
-
-        changes = np.stack([
-            np.abs(np.diff(data[tag][1]))
-            for tag in tags
-        ])
-
-        return steps[1:], np.mean(changes, axis=0)
-
-    gates = ("cell", "forget", "input", "output")
-    
-    connections = ("hh", "ih")
-
-    # Figure 3: one mean across four biases for each gate and connection.
-    bias_change_means = {
-        (gate, connection): mean_absolute_change([
-            f"lstm_actor_bias_b_{connection}_{gate}_h{row}"
-            for row in range(4)
-        ])
-
-        for gate in gates
-        for connection in connections
-    }
-
-    weight_change_means = {
-        (gate, connection): mean_absolute_change([
-            f"lstm_actor_weight_w_{connection}_{gate}_h{row}{"h" if connection == "hh" else "i"}{column}"
-            for row in range(4)
-            for column in range(4)
-        ])
-
-        for gate in gates
-        for connection in connections
-    }
-
-    fig3 = plt.figure(figsize=(12, 10))
-
-    ax3_1 = fig3.add_subplot(211)
-    ax3_1.plot(*bias_change_means[("cell", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,g}|}$")
-    ax3_1.plot(*bias_change_means[("cell", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,g}|}$")
-    ax3_1.plot(*bias_change_means[("forget", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,f}|}$")
-    ax3_1.plot(*bias_change_means[("forget", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,f}|}$")
-    ax3_1.plot(*bias_change_means[("input", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,i}|}$")
-    ax3_1.plot(*bias_change_means[("input", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,i}|}$")
-    ax3_1.plot(*bias_change_means[("output", "hh")], linewidth=1, label=r"$\overline{|\Delta b_{h,o}|}$")
-    ax3_1.plot(*bias_change_means[("output", "ih")], linewidth=1, label=r"$\overline{|\Delta b_{i,o}|}$")
-    ax3_1.set_ylabel("Bias Change")
-    ax3_1.legend(loc="upper right", ncols=4)
-
-    for legend_line in ax3_1.get_legend().get_lines():
-        legend_line.set_linewidth(2)
-
-    ax3_1.grid()
-    ax3_1.xaxis.set_major_formatter(timestep_formatter)
-
-    ax3_2 = fig3.add_subplot(212)
-    ax3_2.plot(*weight_change_means[("cell", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,g}|}$")
-    ax3_2.plot(*weight_change_means[("cell", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,g}|}$")
-    ax3_2.plot(*weight_change_means[("forget", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,f}|}$")
-    ax3_2.plot(*weight_change_means[("forget", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,f}|}$")
-    ax3_2.plot(*weight_change_means[("input", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,i}|}$")
-    ax3_2.plot(*weight_change_means[("input", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,i}|}$")
-    ax3_2.plot(*weight_change_means[("output", "hh")], linewidth=1, label=r"$\overline{|\Delta W_{h,o}|}$")
-    ax3_2.plot(*weight_change_means[("output", "ih")], linewidth=1, label=r"$\overline{|\Delta W_{i,o}|}$")
-    ax3_2.set_xlabel("Timestep")
-    ax3_2.set_ylabel("Weight Change")
-    ax3_2.legend(loc="upper right", ncols=4)
-
-    for legend_line in ax3_2.get_legend().get_lines():
-        legend_line.set_linewidth(2)
-
-    ax3_2.grid()
-    ax3_2.xaxis.set_major_formatter(timestep_formatter)
-
-    plt.tight_layout()
-    #plt.show()
-
-    # Figure 4: average each bias over consecutive 5M-timestep windows.
-    window_size = 5_000_000
-
-    def smooth_bias(series):
-        steps, values = series
-        smoothed_steps = []
-        smoothed_values = []
-
-        for window_start in range(0, int(steps[-1]) + 1, window_size):
-            in_window = (steps >= window_start) & (steps < window_start + window_size)
-            if np.any(in_window):
-                smoothed_steps.append(np.mean(steps[in_window]))
-                smoothed_values.append(np.mean(values[in_window]))
-
-        return np.array(smoothed_steps), np.array(smoothed_values)
-
-    smoothed_biases = {
-        tag: smooth_bias(series)
-        for tag, series in data.items()
-        if tag.startswith("lstm_actor_bias_")
-    }
-
-    # Use smoothed_biases to create the bias change.
-    bias_changes_smoothed = {
-        tag: (steps, np.cumsum(np.diff(values, prepend=values[0])))
-        for tag, (steps, values) in smoothed_biases.items()
-    }
-
-    fig4 = plt.figure(figsize=(12, 10))
-
-    # Plot smoothed biases
-    ax4_1 = fig4.add_subplot(211)
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h0"], linewidth=1, label=r"$b_{h,g,(0)}$")
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h1"], linewidth=1, label=r"$b_{h,g,(1)}$")
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h2"], linewidth=1, label=r"$b_{h,g,(2)}$")
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_cell_h3"], linewidth=1, label=r"$b_{h,g,(3)}$")
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_forget_h0"], linewidth=1, label=r"$b_{h,f,(0)}$")
-    ax4_1.plot(*smoothed_biases["lstm_actor_bias_b_hh_forget_h1"], linewidth=1, label=r"$b_{h,f,(1)}$")
-    ax4_1.legend(loc="upper left", ncols=4)
-
-    # Plot smoothed bias changes
-    ax4_2 = fig4.add_subplot(212)
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h0"], linewidth=1, label=r"$\Delta b_{h,g,(0)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h1"], linewidth=1, label=r"$\Delta b_{h,g,(1)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h2"], linewidth=1, label=r"$\Delta b_{h,g,(2)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_cell_h3"], linewidth=1, label=r"$\Delta b_{h,g,(3)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h0"], linewidth=1, label=r"$\Delta b_{h,f,(0)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h1"], linewidth=1, label=r"$\Delta b_{h,f,(1)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h2"], linewidth=1, label=r"$\Delta b_{h,f,(2)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_forget_h3"], linewidth=1, label=r"$\Delta b_{h,f,(3)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h0"], linewidth=1, label=r"$\Delta b_{h,i,(0)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h1"], linewidth=1, label=r"$\Delta b_{h,i,(1)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h2"], linewidth=1, label=r"$\Delta b_{h,i,(2)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_input_h3"], linewidth=1, label=r"$\Delta b_{h,i,(3)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h0"], linewidth=1, label=r"$\Delta b_{h,o,(0)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h1"], linewidth=1, label=r"$\Delta b_{h,o,(1)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h2"], linewidth=1, label=r"$\Delta b_{h,o,(2)}$")
-    ax4_2.plot(*bias_changes_smoothed["lstm_actor_bias_b_hh_output_h3"], linewidth=1, label=r"$\Delta b_{h,o,(3)}$")
-    ax4_2.legend(loc="upper left", ncols=4)
-    
-    #plt.show()
-
 
 def plot_pointing_accuracy_histogram(loaded_episodes_list: list, evaluation_labels: list):
+    """
+    Plots a histogram for final attitude error and compares different evaluation files.
+
+    Args: 
+        loaded_episodes_list (list): A list of loaded evaluation file objects.
+        evaluation_labels (list): A list of labels for each evaluation.
+    """
+
     # Switch to interactive backend for 3D plots
     matplotlib.use("TkAgg")
 
@@ -960,58 +734,29 @@ if __name__ == "__main__":
     eval_env = create_evaluation_env(PHASE_TYPE, INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, controller=CONTROLLER)
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True) if CONTROLLER == "DRL" else None
 
-    """ Uncomment the lines below to run 1 simulation and plot the results. """
-    simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, Config.Visualization.MODEL_NAME, create_video=Config.Visualization.CREATE_VIDEO, controller=CONTROLLER)
-    #visualize_episode_basilisk(simulation_data, show_basilisk_viz=Config.Visualization.SHOW_BASILISK_VIZ)
-    viz_file_path = os.path.join(viz_dir, f"{Config.Visualization.MODEL_NAME}_{INITIAL_STATE}_{time_human}.bin")
-    #save_episode_as_viz(viz_file_path, simulation_data, Config.Visualization.SHOW_BASILISK_VIZ, Config.Visualization.VIZARD_EXE_PATH)
+    """ Uncomment the lines below to run 1 simulation and plot the results (debug plot format). """
+    #simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, controller=CONTROLLER)
     #plot_actual_attitude(simulation_data)
-    #visualize_net_arch(model, eval_env)
-    plot_for_report(simulation_data, time_end=300)
+    
+    """ Uncomment the lines below to run 1 simulation and plot the results (report plot format). """
+    #simulation_data = simulate_episode(model, eval_env, Config.Visualization.MAX_STEPS, controller=CONTROLLER)
+    #plot_for_report(simulation_data, time_end=300)
+
+    """ Uncomment the line below to plot tensorboard data (requires CSV export from tensorboard). """
     #plot_tensorboard_data()
 
-    """ Uncomment the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
+    """ Uncomment (and edit the file names) the lines below if you have saved evaluation data (from evaluate_agent()) to load all the episodes.
         loaded contains ALL episodes, therefore in loaded[] should be the index of the episode you want to plot.
     """
+    #loaded_0 = load_evaluation_data("")
+    #loaded_1 = load_evaluation_data("")
+    #loaded_2 = load_evaluation_data("")
+    #loaded_3 = load_evaluation_data("")
+    #loaded_4 = load_evaluation_data("")
 
-    #loaded_0 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-05-17-28-17.npz")
-    #loaded_1 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-05-18-19-17.npz")
-    #loaded_2 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-05-19-15-21.npz")
-    #loaded_3 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-20-15-06.npz")
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_kozMinMargin0_2026-10-05-21-08-08.npz")
+    #plot_actual_attitude(loaded_0[0])
+    #plot_for_report(loaded_0[0],time_end=100)
 
-    #loaded_0 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-05-11-28-59.npz")
-    #loaded_1 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-05-12-25-31.npz")
-    #loaded_2 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-05-14-01-11.npz")
-    #loaded_3 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-14-56-28.npz")
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_kozMinMargin0_2026-10-05-15-55-56.npz")
-    
-    # good example: ep26 (narrow,loaded_4), ep9 (detour,loaded_4)
-    # violation example: ep139 (settles,loaded_4), ep250 (stuck,loaded_4)
-    # stall example: ep401 (loaded_4)
-    # above 40 deg eps: loaded_3: [365,729,968,2084,2482,4258,4991,5111,5490,5694,6167,7603,8649,8872] cnt=14 | loaded_4: [41,90,105,250,265,290,313,371,378,401,449,515,549,687,787,797,873,877,954,967,1071,1128] cnt=214
-    # violation eps: loaded_3 [365,482,564,729,829,904,968,1079,1327,1527,1561,1575,1810,2084,2181,2482,2970,3092,3555] | loaded_4 [35,60,90,96,105,108,132,136,139,161,209,245,250,281,290,305,357,371,378,390,398,426,446,461,485,528,532,577,601,604,624,639,710,728,731,732,735,789,794,812,819,829]
-    # above 40 deg and NO violation: loaded_3: [none] | loaded_4: [41,265,313,401,449,515,549,687,787,797,873]
-    #loaded_0 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-26-12-59-46.npz")
-    #loaded_1 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-26-13-40-33.npz")
-    #loaded_2 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-26-14-09-47.npz")
-    #loaded_3 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-26-14-36-40.npz")
-    #loaded_4 = load_evaluation_data("apf_kozMinMargin0_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-26-15-07-27.npz")
-
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2b_fast_lstm8_kozMinMargin0_schedFullv1c3_53300000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-08-23-31-55.npz")
-    
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2e_fast_lstm8_kozMinMargin0_schedFullv1c3_50000000_[90.0, 110.0, 0.0, 0.01, 3000, 25.0, 30.0, 3, 3]_ep[100]_2026-10-12-18-40-24.npz")
-
-    # APF vs DRL 3 KOZs always touching
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedFullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_kozMargin0_2026-11-05-17-21-17.npz")
-    #loaded_4 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_kozMargin0_2026-11-05-17-06-37.npz")
-
-    # Omega_margin = 0
-    #loaded_4 = load_evaluation_data("rewMod224ph2c2rev7_fast_lstm8_kozMinMargin0_schedFullv1c3_54000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_2026-11-06-11-49-53.npz")
-
-    #plot_actual_attitude(loaded_4[11])
-    #plot_for_report(loaded_4[401],time_end=100)
     #multiple_loaded = [loaded_0, loaded_1, loaded_2, loaded_3, loaded_4]
-    #evaluation_labels = ["0 KOZs", "1 KOZ"]
     #evaluation_labels = ["0 KOZs", "1 KOZ", "2 KOZs", "3 KOZs", "3 KOZs ($\\Omega_{\\mathrm{margin}} = [0, \\theta]$°)"]
     #plot_pointing_accuracy_histogram(multiple_loaded, evaluation_labels)
