@@ -9,9 +9,7 @@ import sys
 import threading
 import time
 import viser
-import viser.transforms as tf
 import numpy as np
-from dataclasses import dataclass
 from pathlib import Path
 
 drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
