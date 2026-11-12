@@ -275,6 +275,9 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     torque_2_prev = torque_prev[1]
     torque_3_prev = torque_prev[2]
     koz_margin_min = np.min(state_koz[:, 0]) # For KOZ related reward calculation, use the minimum margin angle of all KOZs.
+    closest_koz_idx = np.argmin(state_koz[:, 0])
+    koz_direction_closest = state_koz[closest_koz_idx, 1:4] # The direction of the closest KOZ in inertial frame
+    koz_margins_violated = [margin for margin in state_koz[:, 0] if margin <= 0]
     
     # Clamp q0 values to [-1, 1] to prevent acos() domain errors (NaN) with large torques
     # Using min/max instead of np.clip for numba compatibility with scalars
@@ -290,11 +293,14 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
     err_phi_delta = err_phi_prev - err_phi_current
 
     ang_vel_norm = calc_vector_norm(np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z]))
+    ang_vel = np.array([ang_vel_sat_x, ang_vel_sat_y, ang_vel_sat_z])
 
-    koz_margin_delta = koz_margin_min_prev - koz_margin_min
+    boresight_unit_vector = np.array([1.0, 0.0, 0.0]) # The boresight vector in body frame is along the x-axis
+
+    koz_margin_delta = koz_margin_min - koz_margin_min_prev
 
     r_total = 0
-    USE_REWARD = "yangMod2"
+    USE_REWARD = "mod224ph2c2rev9" # mod224ph2c2g
     
     if USE_REWARD == "paper1":
         # Reward for reducing attitude error
@@ -361,6 +367,112 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
                 r_koz = 0.0
 
         r_total = r_err + r_koz
+
+    if USE_REWARD == "yangMod5":
+        r_err = 0.0
+        if koz_margin_min > 0:
+            r_err = 0.5*np.exp(-err_phi_current/30.0)
+
+        r_progress = 0.0
+        if koz_margin_min > 0 and err_phi_delta > 0:
+            r_progress = min(err_phi_delta, 0.2) * min(koz_margin_min, 0.2)
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 30.0)
+            r_koz_direction = max(r_koz_direction, -1.0)
+
+    
+        r_stall = -0.2 * np.exp(-(180-err_phi_current) / 200.0)
+
+        # Penalty for entering / being close to keep out zone
+        r_koz = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r_koz = -20 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.1)
+
+            else:
+                r_koz = -20 * np.exp(-koz_margin_min * 25.0) * max(ang_vel_norm, 0.1)
+
+        # if time_elapsed < 50:
+        #     print(f"[{time_elapsed:.1f}] err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(koz_margin_min*180/np.pi):.2f}, r_err {r_err:.3f}, r_progress {r_progress:.3f}, r_koz_direction {r_koz_direction:.3f}, r_koz {r_koz:.3f}")
+
+        r_total = r_err + r_progress + r_koz_direction + r_koz + r_stall
+
+    if USE_REWARD == "yangMod6":
+        r_err = 0.0
+        if koz_margin_min > 0:
+            r_err = 0.5*np.exp(-err_phi_current/40.0)
+            if err_phi_current < 1.0:
+                r_err += 1
+
+        r_progress = 0.0
+        if koz_margin_min > 0:
+            r_progress = 100 * err_phi_delta * np.exp(-err_phi_current)
+            r_progress = min(r_progress, 0.5)
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 15.0)
+
+
+        # Penalty for entering / being close to keep out zone
+        r_koz = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                ang_vel_eff_norm = np.sqrt(ang_vel_sat_y**2 + ang_vel_sat_z**2) # exclude x component as it is boresight vector.
+                r_koz = -30 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_eff_norm, 0.05)
+
+            else:
+                r_koz = 0
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.17:
+            r_speed = -1.0
+
+        
+        print(f"[{time_elapsed:.1f}] err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(koz_margin_min*180/np.pi):.2f}, r_err {r_err:.3f}, r_progress {r_progress:.3f}, r_koz_direction {r_koz_direction:.3f}, r_koz {r_koz:.3f}")
+
+        r_total = r_err + r_progress + r_koz_direction + r_koz + r_speed
+
+    if USE_REWARD == "yangMod7":
+        r_err = 0.0
+        if koz_margin_min > 0:
+            r_err = 0.5*np.exp(-err_phi_current/40.0)
+            if err_phi_current < 1.0:
+                r_err += 1
+
+        r_progress = 0.0
+        if koz_margin_min > 0:
+            r_progress = 30 * err_phi_delta * np.exp(-err_phi_current / 2.0)
+            r_progress = max(min(r_progress, 0.5), -0.5)
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 15.0)
+
+
+        # Penalty for entering / being close to keep out zone
+        r_koz = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                ang_vel_eff_norm = np.sqrt(ang_vel_sat_y**2 + ang_vel_sat_z**2) # exclude x component as it is boresight vector.
+                r_koz = -30 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_eff_norm, 0.05)
+
+            else:
+                r_koz = 0
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.17:
+            r_speed = -1.0
+
+        
+        print(f"[{time_elapsed:.1f}] err {err_phi_current:.2f}, vel {ang_vel_norm:.2f}, margin {(koz_margin_min*180/np.pi):.2f}, r_err {r_err:.3f}, r_progress {r_progress:.3f}, r_koz_direction {r_koz_direction:.3f}, r_koz {r_koz:.3f}")
+
+        r_total = r_err + r_progress + r_koz_direction + r_koz + r_speed
 
     if USE_REWARD == "prak":
         # Reward for reducing attitude error
@@ -1916,6 +2028,1174 @@ def reward_function(state, _q0_prev, torque, torque_prev, phase, state_koz, koz_
         
         r_total = r1 + r2 + r4 + r5
 
+    if USE_REWARD == "mod224ph2c2rev1":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Revision 1: high velocity penalty, KOZ penalty scales with velocity.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -20 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.05)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874: # around 5 deg/s
+            r_speed = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r_speed
+
+    if USE_REWARD == "mod224ph2c2rev2":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Revision 2: Make KOZ penalty continuous starting close. Increase KOZ penalty weight. Increase pointing weight. Increase torque weight.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -200 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.05)
+            # No penalty if farther away
+            else:
+                r5 = -200 * np.exp(-koz_margin_min * 219.0) * max(ang_vel_norm, 0.05)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874: # around 5 deg/s
+            r_speed = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r_speed
+
+    if USE_REWARD == "mod224ph2c2rev4":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Revision 3: Compared to rev3: add koz directional, lower pointing weight.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+
+            if r1 < 0:
+                r1 = r1 * 1.1
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-((err_phi_current / 1.5)))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-((err_phi_current / 1.5)))
+
+            r2 += - err_phi_current / 1000.0
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            for margin in koz_margins_violated:
+                # Maximum penalty inside of KOZ
+                r5 += -20 * np.exp(-margin * 6.0) * max(ang_vel_norm, 0.05)
+
+            if koz_margin_min > 0:
+                r5 = -20 * np.exp(-koz_margin_min * 219.0) * max(ang_vel_norm, 0.05)
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0 and koz_margin_min > 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874: # around 5 deg/s
+            r_speed = -1.0
+
+        r_total = r1 + r2 + r4 + r5 + r_koz_direction + r_speed
+
+    if USE_REWARD == "mod224ph2c2rev5":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Revision 5: more close to og again.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-(err_phi_current / 1.5))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-(err_phi_current / 1.5))
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            for margin in koz_margins_violated:
+                # Maximum penalty inside of KOZ
+                r5 += -20 * np.exp(-margin * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            if 0 < koz_margin_min < 0.17:
+                r5 = -5 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874: # around 5 deg/s
+            r_speed = -1.0
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0 and koz_margin_min > 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        r_total = r1 + r2 + r4 + r5 + r_speed + r_koz_direction
+
+    if USE_REWARD == "mod224ph2c2rev6":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Revision 6: compareed to rev5: different speed penalty.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-(err_phi_current / 1.5))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-(err_phi_current / 1.5))
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            for margin in koz_margins_violated:
+                # Maximum penalty inside of KOZ
+                r5 += -20 * np.exp(-margin * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            if 0 < koz_margin_min < 0.17:
+                r5 = -5 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874 and koz_margin_min < 0.26: # around 5 deg/s
+            r_speed = 60 * (0.0874-ang_vel_norm) * (0.26-koz_margin_min)
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0 and koz_margin_min > 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        r_total = r1 + r2 + r4 + r5 + r_speed + r_koz_direction
+
+    if USE_REWARD == "mod224ph2c2rev7":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Compared to og: only scale KOZ penalty with speed.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -20 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -20.0 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2c2rev8":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Compared to rev7: increased pointing reward.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-err_phi_current / 1.5)
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-err_phi_current / 1.5)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -20 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -20.0 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod224ph2c2rev9":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: Compared to rev8: less weight reducing attitude error
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta * 0.1
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+
+            r1 = 0.1 * r1
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-err_phi_current / 1.5)
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.6 * np.exp(-err_phi_current / 1.5)
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -20 * np.exp(-koz_margin_min * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min < 0.17:
+                r5 = -20.0 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        
+        r_total = r1 + r2 + r4 + r5
+
+    if USE_REWARD == "mod99":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: idea: penalty based
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0:
+                r1 = err_phi_delta * (20 * np.exp(-err_phi_current * 0.2) + 0.05)
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 1.5))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 1.5))
+            r2 += -0.05 * err_phi_current / 180.0
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            for margin in koz_margins_violated:
+                # Maximum penalty inside of KOZ
+                r5 += -20 * np.exp(-margin * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            if 0 < koz_margin_min < 0.17:
+                r5 = -5 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874 and koz_margin_min < 0.26: # around 5 deg/s
+            r_speed = 60 * (0.0874-ang_vel_norm) * (0.26-koz_margin_min)
+        elif ang_vel_norm > 0.17:
+            r_speed = -1.0
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0 and koz_margin_min > 0:
+            r_koz_direction = 200* koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        r_total = r1 + r2 + r4 + r5 + r_speed + r_koz_direction
+
+    if USE_REWARD == "mod991":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: idea: penalty based
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0:
+                r1 = 2 * err_phi_delta * (20 * np.exp(-err_phi_current * 0.2) + 1)
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 1.5))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 1.5))
+            r2 += -0.05 * err_phi_current / 180.0
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            for margin in koz_margins_violated:
+                # Maximum penalty inside of KOZ
+                r5 += -80 * np.exp(-margin * 6.0) * max(ang_vel_norm, 0.05)
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            if 0 < koz_margin_min < 0.17:
+                r5 = -20 * (1.0 - koz_margin_min/0.17) * max(ang_vel_norm, 0.05)
+
+        r_speed = 0.0
+        if ang_vel_norm > 0.0874 and koz_margin_min < 0.26: # around 5 deg/s
+            r_speed = 60 * (0.0874-ang_vel_norm) * (0.26-koz_margin_min)
+        elif ang_vel_norm > 0.17:
+            r_speed = -1.0
+
+        r_koz_direction = 0.0
+        if koz_margin_delta < 0 and koz_margin_min > 0:
+            r_koz_direction = 300* koz_margin_delta * np.exp(-koz_margin_min * 20.0)
+
+        print(f"[{time_elapsed:.1f}] r1={r1:.3f}, r2={r2:.3f}, r4={r4:.3f}, r5={r5:.3f}, r_speed={r_speed:.3f}, r_koz_dir={r_koz_direction:.3f}")
+
+        r_total = r1 + r2 + r4 + r5 + r_speed + r_koz_direction
+
+    if USE_REWARD == "mod224ph2c2a":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            r2 = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r6
+
+    if USE_REWARD == "mod224ph2c2b":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+
+                if err_phi_current < 1.0:
+                    r2 += 0.1
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r6
+
+    if USE_REWARD == "mod224ph2c2c":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.1
+
+            if err_phi_current > 1.0:
+                r2 -= 0.05
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r6
+
+    if USE_REWARD == "mod224ph2c2d":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc, no penalty for moving away from target if moving away from KOZ and being close to KOZ
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 2*0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0.17:
+                # If KOZ margin between [0.17, 2*0.17] and moving away from KOZ, dont penalize moving away from target.
+                if err_phi_delta < 0 and koz_margin_delta > 0:
+                    r1 = 0
+                else:
+                    r1 = err_phi_delta
+            elif koz_margin_min > 0:
+                # If KOZ margin between [0, 0.17] and moving away from KOZ, dont penalize moving away from target.
+                if err_phi_delta < 0 and koz_margin_delta > 0:
+                    r1 = 0
+                else:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.1
+
+            if err_phi_current > 1.0:
+                r2 -= 0.05
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        
+        r_total = r1 + r2 + r4 + r5 + r6
+
+    if USE_REWARD == "mod224ph2c2e":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc, reward for moving tangential to KOZ,
+                no penalty for moving away from target if within a buffer zone round KOZ.
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 2*0.17:
+                r1 = err_phi_delta
+            elif koz_margin_min > 0.17:
+                if err_phi_delta > 0:
+                    r1 = err_phi_delta
+                else:
+                    r1 = 0
+            elif koz_margin_min > 0:
+                if err_phi_delta > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
+                else:
+                    r1 = 0
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.2 * np.exp(-(err_phi_current / 20.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.1
+
+            if err_phi_current > 1.0:
+                r2 -= 0.05
+            
+
+        # Penalty for using large torques
+        r4 = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -1.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -1.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        # Bonus for moving tangential around KOZ.
+        r7 = 0.0
+        # If koz_margin_min in [0.17, 2*0.17]
+        if koz_margin_min >= 0.17 and koz_margin_min <= 2*0.17:
+            r7 = ang_vel_norm * 180.0 / np.pi * 0.05
+
+        
+        r_total = r1 + r2 + r4 + r5 + r6 + r7
+
+    if USE_REWARD == "mod224ph2c2f":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc, reward for moving tangential to KOZ,
+                no penalty for moving away from target if within a buffer zone round KOZ, prevent moving back and forth around KOZ, adjust weights. 
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = 1 * err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 2*0.17:
+                r1 = 1 * err_phi_delta
+            elif koz_margin_min > 0.17:
+                r1 = 1 * err_phi_delta
+            elif koz_margin_min > 0:
+                if err_phi_delta > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
+                else:
+                    r1 = 0
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.4 * np.exp(-(err_phi_current / 15.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.4 * np.exp(-(err_phi_current / 15.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.1
+
+            # No bonus within 0.17 KOZ safety margin
+            else:
+                r2 = 0.0
+
+            if err_phi_current > 1.0:
+                r2 -= 0.1
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+        r4 -= 100.0 * np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2)
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -2.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.08: # around 4.5 deg/s
+            r6 = -1.0
+
+        # Bonus for moving tangential around KOZ.
+        r7 = 0.0
+        # If koz_margin_min in [0.17, 2*0.17]
+        if koz_margin_min >= 0.17 and koz_margin_min <= 2*0.17:
+            r7 = 4.0 * (ang_vel_norm * 180.0 / np.pi * 0.05) * np.exp(- abs(koz_margin_delta) * 1000.0)
+
+        print(f"[{time_elapsed:.1f}] r1={r1:.3f}, r2={r2:.3f}, r4={r4:.3f}, r5={r5:.3f}, r6={r6:.3f}, r7={r7:.3f} | vel={ang_vel_norm:.3f}, delta_koz_margin_min={koz_margin_delta:.5f}")
+        
+        r_total = r1 + r2 + r4 + r5 + r6 + r7
+
+    if USE_REWARD == "mod224ph2c2g":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc, reward for moving tangential to KOZ,
+                no penalty for moving away from target if within a buffer zone round KOZ, prevent moving back and forth around KOZ, adjust weights,
+                fix exploit rotating around boresight vector. 
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = 1 * err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 2*0.17:
+                r1 = 1 * err_phi_delta
+            elif koz_margin_min > 0.17:
+                r1 = 1 * err_phi_delta
+            elif koz_margin_min > 0:
+                if err_phi_delta > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17)
+                else:
+                    r1 = 0
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.5 * np.exp(-(err_phi_current / 25.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.5 * np.exp(-(err_phi_current / 25.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.4
+
+            # No bonus within 0.17 KOZ safety margin
+            else:
+                r2 = 0.0
+
+            if err_phi_current > 1.0:
+                r2 -= 0.1
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+        r4 -= 20.0 * np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2)
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -2.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.12: # around 6.9 deg/s
+            r6 = -1.0
+
+        # Bonus for moving tangential around KOZ. Need to use the velocity vector which excludes the component along the boresight vector. This is to prevent exploiting the reward by rotating around the boresight vector.
+        r7 = 0.0
+        ang_vel_eff_norm = np.sqrt(ang_vel_sat_y**2 + ang_vel_sat_z**2) # exclude x component as it is boresight vector.
+        
+        # If koz_margin_min in [0.17, 2*0.17]
+        if koz_margin_min >= 0.17 and koz_margin_min <= 2*0.17:
+            r7 = 3.0 * (ang_vel_eff_norm * 180.0 / np.pi * 0.05) * np.exp(- abs(koz_margin_delta) * 1000.0)
+
+        print(f"[{time_elapsed:.1f}] r1={r1:.3f}, r2={r2:.3f}, r4={r4:.3f}, r5={r5:.3f}, r6={r6:.3f}, r7={r7:.3f} | vel={ang_vel_norm:.3f}, vel_b={ang_vel_eff_norm:.3f}, delta_koz_margin_min={koz_margin_delta:.5f}")
+        
+        r_total = r1 + r2 + r4 + r5 + r6 + r7
+
+    if USE_REWARD == "mod224ph2c2h":
+        """
+        Goal: use mod224 from phase 1 as baseline for phase 2 tuning
+        Result: 
+        Note: ang velocity penalty, different weight for pointing reward, small constant penalty while not within 1° acc, reward for moving tangential to KOZ,
+                no penalty for moving away from target if within a buffer zone round KOZ, prevent moving back and forth around KOZ, adjust weights,
+                fix exploit rotating around boresight vector. 
+        """
+
+        # Reward for reducing attitude error
+        r1 = 0 
+        # Phase 1
+        if phase == "phase 1":
+            r1 = 1 * err_phi_delta
+            
+            
+        # Phase 2
+        else:      
+            if koz_margin_min > 2*0.17:
+                r1 = 1 * err_phi_delta * np.exp(-err_phi_current / 45.0)
+            elif koz_margin_min > 0.17:
+                r1 = 1 * err_phi_delta * np.exp(-err_phi_current / 45.0)
+            elif koz_margin_min > 0:
+                if err_phi_delta > 0:
+                    r1 = err_phi_delta * (koz_margin_min/0.17) * np.exp(-err_phi_current / 45.0)
+                else:
+                    r1 = 0
+            else:
+                r1 = 0
+            
+
+        # Bonus for high accuracy
+        r2 = 0.0
+        if phase == "phase 1":
+            # Bonus for desired accuracy
+            r2 = 0.5 * np.exp(-(err_phi_current / 25.0))
+            
+        elif phase == "phase 2":
+            # Bonus for desired accuracy
+            if koz_margin_min > 0.17:
+                r2 = 0.5 * np.exp(-(err_phi_current / 25.0))
+
+                if err_phi_current <= 1.0:
+                    r2 += 0.4
+
+            # No bonus within 0.17 KOZ safety margin
+            else:
+                r2 = 0.0
+
+            if err_phi_current > 1.0:
+                r2 -= 0.1
+            
+
+        # Penalty for using large torques
+        r4 = - 10.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
+        r4 -= 20.0 * np.sqrt((torque_1-torque_1_prev)**2 + (torque_2-torque_2_prev)**2 + (torque_3-torque_3_prev)**2)
+
+        # Penalty for entering / being close to keep out zone
+        r5 = 0.0
+        if phase == "phase 2":
+            # Maximum penalty inside of KOZ
+            if koz_margin_min <= 0.0:
+                r5 = -2.0
+            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+            elif koz_margin_min <= 0.17:
+                r5 = -2.0 * (1.0 - koz_margin_min/0.17)
+            # No penalty if farther away
+            else:
+                r5 = 0.0
+
+        r6 = 0.0
+        if ang_vel_norm > 0.12: # around 6.9 deg/s
+            r6 = -1.0
+
+        # Bonus for moving tangential around KOZ. Need to use the velocity vector which excludes the component along the boresight vector. This is to prevent exploiting the reward by rotating around the boresight vector.
+        r7 = 0.0
+        ang_vel_eff_norm = np.sqrt(ang_vel_sat_y**2 + ang_vel_sat_z**2) # exclude x component as it is boresight vector.
+        
+        # If koz_margin_min in [0.17, 2*0.17]
+        if koz_margin_min >= 0.17 and koz_margin_min <= 2*0.17:
+            r7 = 2.0 * (ang_vel_eff_norm * 180.0 / np.pi * 0.05) * np.exp(- abs(koz_margin_delta) * 1000.0)
+
+        #print(f"[{time_elapsed:.1f}] r1={r1:.3f}, r2={r2:.3f}, r4={r4:.3f}, r5={r5:.3f}, r6={r6:.3f}, r7={r7:.3f} | vel={ang_vel_norm:.3f}, vel_b={ang_vel_eff_norm:.3f}, delta_koz_margin_min={koz_margin_delta:.5f}")
+        
+        r_total = r1 + r2 + r4 + r5 + r6 + r7
+
     if USE_REWARD == "mod224ph2c3":
         """
         Goal: use mod224 from phase 1 as baseline for phase 2 tuning
@@ -3298,7 +4578,7 @@ class BasiliskRWEnv(gym.Env):
         else:
             # Minimum margin angle between two KOZs
             #MARGIN = 20.0 * np.pi / 180.0
-            MARGIN = 0
+            MARGIN = 0 * np.pi / 180.0
 
             # For each additional KOZ, generate another KOZ
             for koz_nr in range(2, self.current_nr_koz+1):
@@ -3316,6 +4596,8 @@ class BasiliskRWEnv(gym.Env):
                 # Rotate the bisector by a deviation angle using rodrigues formula
                 # Deviation angle from first KOZ is chosen to guarantee min margin between KOZs and some deviation for new KOZ
                 deviation_angle = half_angle_koz_1 + MARGIN + half_angle_koz + np.random.uniform(0, half_angle_koz)
+                #deviation_angle = half_angle_koz_1 + MARGIN + half_angle_koz + np.random.uniform(0, 0*np.pi/180)
+                
                 deviation_angle = deviation_angle * direction
 
 
@@ -3351,6 +4633,7 @@ class BasiliskRWEnv(gym.Env):
                 margin_koz = calc_margin_koz(quat, self.active_koz_config["normal_vector"][koz_idx], self.active_koz_config["half_angle_rad"][koz_idx])
                 normal_vector_bf = rotate_vector_by_quaternion_to_body_frame(self.active_koz_config["normal_vector"][koz_idx], quat)
                 direction_vector_bf = normal_vector_bf - self.x_axis
+                direction_vector_bf = normalize_vector(direction_vector_bf)
 
                 koz_state[koz_idx][0] = np.array(margin_koz, dtype=np.float64) 
                 koz_state[koz_idx][1:4] = np.array(direction_vector_bf, dtype=np.float64)
@@ -3493,7 +4776,7 @@ class BasiliskRWEnv(gym.Env):
 
     def step(self, action):
         q0_prev = self.state["satellite"][0]
-        koz_margin_min_prev = self.min_margin_koz
+        koz_margin_min_prev = np.min(self.state["zones"][:,0])
 
         self._apply_action(action)
 
@@ -3633,16 +4916,21 @@ class LSTM(BaseFeaturesExtractor):
     def __init__(self, observation_space: spaces.Dict, sat_obs_dim: int, lstm_out_dim: int):
         self.sat_obs_dim = sat_obs_dim
         self.lstm_out_dim = lstm_out_dim
-        self.total_obs_dim = sat_obs_dim + lstm_out_dim
-        self.KOZ_FEATURE_SCALING = (np.pi, 2.0, 2.0, 2.0)
-
-        # Number of features for the extractor corresponds to the combined observation, as the extractor also combines it.
-        super().__init__(observation_space=observation_space, features_dim=self.total_obs_dim)
+        self.USE_LSTM = True
+        self.KOZ_FEATURE_SCALING = (np.pi, 1.0, 1.0, 1.0)
 
         # Get the maximum number of KOZs and the LSTM input dimension (= feature dimension of a KOZ)
         zones_max, lstm_in_dim = observation_space["zones"].shape
         self.zones_max = zones_max
         self.lstm_in_dim = lstm_in_dim
+
+        # The output size must match the representation returned by forward().
+        self.total_obs_dim = (
+            sat_obs_dim + lstm_out_dim
+            if self.USE_LSTM
+            else sat_obs_dim + zones_max * lstm_in_dim
+        )
+        super().__init__(observation_space=observation_space, features_dim=self.total_obs_dim)
 
         # The LSTM 
         self.lstm = th.nn.LSTM(
@@ -3651,8 +4939,6 @@ class LSTM(BaseFeaturesExtractor):
             num_layers=1,
             batch_first=True # Expects batch dimension first
         )
-
-        #self.timestep = 0
 
     def forward(self, observations):
         sat_obs: th.Tensor = observations["satellite"]
@@ -3670,43 +4956,54 @@ class LSTM(BaseFeaturesExtractor):
         # From the mask, get the indices of the batch for the observations with at least one KOZ
         non_zero_indices = non_zero_zones_mask.nonzero(as_tuple=True)[0]
 
-        # Container for LSTM output of the entire batch
-        self.lstm_out = th.zeros(batch_size, self.lstm_out_dim, device=device)
+        if self.USE_LSTM:
 
-        # Number of batch obsverations with at least one KOZ
-        non_zero_obs_count = non_zero_indices.numel()
+            # Container for LSTM output of the entire batch
+            self.lstm_out = th.zeros(batch_size, self.lstm_out_dim, device=device)
 
-        # If there is at least one obs with KOZs, process the LSTM
-        if non_zero_obs_count > 0:
+            # Number of batch obsverations with at least one KOZ
+            non_zero_obs_count = non_zero_indices.numel()
 
-            # Get all observations (and their KOZ count) with at least one KOZ from the batch
-            non_zero_zones = zones_obs[non_zero_indices]
-            non_zero_zones_count = zones_count[non_zero_indices]
-            zones_mask_filtered = zones_mask[non_zero_indices] # Removes observations from zones mask with no KOZ
+            # If there is at least one obs with KOZs, process the LSTM
+            if non_zero_obs_count > 0:
 
+                # Get all observations (and their KOZ count) with at least one KOZ from the batch
+                non_zero_zones = zones_obs[non_zero_indices]
+                non_zero_zones_count = zones_count[non_zero_indices]
+                zones_mask_filtered = zones_mask[non_zero_indices] # Removes observations from zones mask with no KOZ
+
+                # Manually normalize KOZ observation.
+                non_zero_zones = non_zero_zones / non_zero_zones.new_tensor(self.KOZ_FEATURE_SCALING)
+
+                # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
+                koz_margins = non_zero_zones[:,:,0] # Margin is index 0
+                koz_margins_mod = koz_margins.masked_fill(~zones_mask_filtered.bool(), float("-inf")) # Replace inactive KOZ margins values with -inf for sorting, so that they end up last and cut off by pack_padded_sequence.
+                sort_indices = th.argsort(koz_margins_mod, dim=1, descending=True)
+                gather_index = sort_indices.unsqueeze(-1).expand(-1, -1, non_zero_zones.shape[-1]) # Transform index dimension from (batch,4) to (batch,4,4) to also sort other KOZ features besides margin.
+                non_zero_zones = th.gather(non_zero_zones, dim=1, index=gather_index) # Apply sorting to unmodified obs.
+
+                # Create an LSTM sequence (consisting of as many LSTM cells as there are KOZs) for each batch obs (which has at least 1 KOZ)
+                lstm_sequences = th.nn.utils.rnn.pack_padded_sequence(
+                    input=non_zero_zones,
+                    lengths=non_zero_zones_count.cpu(), # As we provide it as a tensor (and not a list), must be on the CPU
+                    batch_first=True,
+                    enforce_sorted=False
+                )
+
+                # Process the LSTM
+                output, (hidden_state_out, cell_state_out) = self.lstm(input=lstm_sequences)
+
+                # Store the final hidden state of each batch observation
+                self.lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
+
+        # Dont use LSTM, just use (padded) KOZ observation as is, and flatten it to a vector.
+        else:
             # Manually normalize KOZ observation.
-            non_zero_zones = non_zero_zones / non_zero_zones.new_tensor(self.KOZ_FEATURE_SCALING)
+            zones_obs = zones_obs / zones_obs.new_tensor(self.KOZ_FEATURE_SCALING)
 
-            # Sort KOZs by margin, such that the zone with smallest margin is processed last by the LSTM.
-            koz_margins = non_zero_zones[:,:,0] # Margin is index 0
-            koz_margins_mod = koz_margins.masked_fill(~zones_mask_filtered.bool(), float("-inf")) # Replace inactive KOZ margins values with -inf for sorting, so that they end up last and cut off by pack_padded_sequence.
-            sort_indices = th.argsort(koz_margins_mod, dim=1, descending=True)
-            gather_index = sort_indices.unsqueeze(-1).expand(-1, -1, non_zero_zones.shape[-1]) # Transform index dimension from (batch,4) to (batch,4,4) to also sort other KOZ features besides margin.
-            non_zero_zones = th.gather(non_zero_zones, dim=1, index=gather_index) # Apply sorting to unmodified obs.
+            # Flatten the KOZ observation to a vector, and store it as the LSTM output.
+            self.lstm_out = zones_obs.view(batch_size, -1)
 
-            # Create an LSTM sequence (consisting of as many LSTM cells as there are KOZs) for each batch obs (which has at least 1 KOZ)
-            lstm_sequences = th.nn.utils.rnn.pack_padded_sequence(
-                input=non_zero_zones,
-                lengths=non_zero_zones_count.cpu(), # As we provide it as a tensor (and not a list), must be on the CPU
-                batch_first=True,
-                enforce_sorted=False
-            )
-
-            # Process the LSTM
-            output, (hidden_state_out, cell_state_out) = self.lstm(input=lstm_sequences)
-
-            # Store the final hidden state of each batch observation
-            self.lstm_out[non_zero_indices] = hidden_state_out[-1] # of the last layer
 
         # Combine satellite obs and LSTM output
         combined = th.cat([sat_obs, self.lstm_out], dim=1)
