@@ -16,8 +16,15 @@ if _drl_repo_dir not in sys.path:
 from agent_training.trainer import repo_dir, log_path, RED_START, GREEN_START, YELLOW_START, COLOR_END
 import subprocess
 
-def start_tensorboard():
-    """Start TensorBoard server in background, access with http://localhost:6006"""
+
+def start_tensorboard() -> subprocess.Popen:
+    """
+    Start TensorBoard server in background, access with http://localhost:6006.
+
+    Returns:
+        process (Popen): The TensorBoard process object
+    """
+
     print("|")
     print(f"|---{YELLOW_START}Looking for TensorBoard logs in: {log_path}{COLOR_END}")
 
@@ -56,8 +63,14 @@ def start_tensorboard():
         print(f"|-----{RED_START}TensorBoard not found.{COLOR_END}")
 
 
-def stop_tensorboard(process):
-    """Stop TensorBoard server"""
+def stop_tensorboard(process) -> None:
+    """
+    Stop TensorBoard server.
+
+    Args:
+        process (Popen): The TensorBoard process object to terminate
+    """
+
     if process is not None:
         try:
             print(f"|---{YELLOW_START}Stopping TensorBoard server...{COLOR_END}")
@@ -73,7 +86,7 @@ def stop_tensorboard(process):
             print(f"|-----{RED_START}Error stopping TensorBoard: {e}{COLOR_END}")
 
 
-# Monitor training progress in TensorBoard
+# Start TensorBoard server
 tensorboard_process = start_tensorboard()
 
 # Stop TensorBoard server on ctrl+C
