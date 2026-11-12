@@ -218,7 +218,8 @@ def do_scheduled_training(model_name: str, schedule: dict, continue_training: bo
             phase.get("min_half_angle_koz", 0.0),
             phase.get("max_half_angle_koz", 0.0),
             phase.get("min_nr_koz", 0),
-            phase.get("max_nr_koz", 0)
+            phase.get("max_nr_koz", 0),
+            phase.get("margin_koz", 0.0)
         ]
 
         # Create the training environment
