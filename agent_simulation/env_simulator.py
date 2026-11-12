@@ -1,5 +1,5 @@
 """
-Simulate the satellite dynamics in the environment and plot the actual attitude trajectory based on the rotation axis and angle phi.
+Simulate the satellite dynamics in the environment and plot the attitude trajectory based on the rotation axis and angle phi.
 Only simulates the environment with a predefined action schedule, not a trained agent.
 
 Author: Cemal Yilmaz - 2026
@@ -18,31 +18,36 @@ if _drl_repo_dir not in sys.path:
 
 
 from config.config import Config
-from agent_training.environment import BasiliskRWEnv, scale_torque, scale_angular_velocity_sat, scale_angular_velocity_wheels
+from agent_training.environment import BasiliskRWEnv
+from agent_training.constants import Constants
 
 
-def create_simulation_env(initial_state, phase_type: str):
+def create_simulation_env(initial_state: list, phase_type: str) -> BasiliskRWEnv:
     """
     Create the simulation environment.
+
     Args:
-        initial_state: A list containing the initial state parameters 
-            [min_initial_error_angle, max_initial_error_angle, min_initial_angular_velocity, max_initial_angular_velocity, max_steps, min_half_angle_koz, max_half_angle_koz]
+        initial_state (list): A list containing the initial state parameters 
     Returns:
-        sim_env: The created simulation environment
+        sim_env (BasiliskRWEnv): The created simulation environment
     """
+
     sim_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)
+
     return sim_env
 
 
-def action_schedule(t):
+def action_schedule(t: float) -> np.ndarray:
     """
     Yields an action based on the current time t.
-    Actions are between -1 and 1 and correspond to -0.0007 Nm and +0.0007 NM
+    Actions are between -1 and 1 and correspond to -TORQUE_WHEEL_MAX and TORQUE_WHEEL_MAX.
+
     Args:
-        t: Current time in seconds
+        t (float): Current time in seconds
     Returns:
-        action: A numpy array of shape (3,) containing the action for each of the 3 wheels
+        action (ndarray): A numpy array of shape (3,) containing the action for each of the 3 wheels
     """
+
     action = np.zeros(3)
 
     if 100.0 <= t < 115.0:
@@ -58,18 +63,19 @@ def action_schedule(t):
     return action
 
 
-def start_simulation(env: BasiliskRWEnv):
+def start_simulation(env: BasiliskRWEnv) -> dict:
     """
     Start the simulation in the given environment.
+
     Args:
-        env: The simulation environment to run
+        env (BasiliskRWEnv): The simulation environment to run
     Returns:
-        simulation_data: A dictionary containing the simulation data for plotting
+        simulation_data (dict): A dictionary containing the simulation data for plotting
     """
+
     observation = env.reset()
-    times = np.linspace(0, env.max_steps/10, env.max_steps)  # Assuming dt=0.1s
+    times = np.linspace(0, env.max_steps * Constants.TIME_DELTA, env.max_steps)
     sat_states = []
-    koz_states = []
     torques = []
     normal_vector_koz_array = env.active_koz_config["normal_vector"]
     half_angle_koz_array = env.active_koz_config["half_angle_rad"]
@@ -81,12 +87,11 @@ def start_simulation(env: BasiliskRWEnv):
         observation, rewards, terminated, truncated, infos = env.step(action)
 
         sat_states.append(observation["satellite"])
-        koz_states.append(observation["zones"])
-        torques.append(scale_torque*action)
+        torques.append(Constants.TORQUE_WHEEL_MAX * action)
+
     env.close()
 
     sat_states_array =  np.array(sat_states)
-    koz_states_array = np.array(koz_states)
     torques_array = np.array(torques)
 
     # store the norm of quaternions
@@ -106,14 +111,15 @@ def start_simulation(env: BasiliskRWEnv):
     return simulation_data
 
 
-def plot_actual_attitude(simulation_data: dict):
+def plot_actual_attitude(simulation_data: dict) -> None:
     """
-    Plot the actual satellite attitude trajectory based on rotation axis and angle phi
+    Plot the satellite attitude trajectory based on rotation axis and angle phi
+
     Args:
-        simulation_data: A dictionary containing the simulation data for plotting
+        simulation_data (dict): A dictionary containing the simulation data for plotting
     """
 
-    matplotlib.use("TkAgg")
+    matplotlib.use("TkAgg") # Use TkAgg backend for interactive plotting
 
     # Parse quaternion and angular velocity components
     q_0, q_1, q_2, q_3 = simulation_data["quaternion"][:, 0], simulation_data["quaternion"][:, 1], simulation_data["quaternion"][:, 2], simulation_data["quaternion"][:, 3]
@@ -128,10 +134,10 @@ def plot_actual_attitude(simulation_data: dict):
         """Convert quaternion to rotation axis and angle"""
         q0, q1, q2, q3 = q
         
-        # Angle phi = 2 * arccos(|q0|) (same as in reward function)
+        # Angle phi = 2 * arccos(|q0|) (same as in reward function).
         angle = 2 * np.arccos(np.abs(q0))
         
-        # Rotation axis = q_vec / |q_vec| (normalized quaternion vector part)
+        # Rotation axis = q_vec / |q_vec| (normalized quaternion vector part).
         q_vec_norm = np.sqrt(q1**2 + q2**2 + q3**2)
         if q_vec_norm > 1e-6:  # Avoid division by zero
             axis = np.array([q1, q2, q3]) / q_vec_norm
@@ -140,7 +146,7 @@ def plot_actual_attitude(simulation_data: dict):
             
         return axis, angle
     
-    # Extract rotation axes and angles for all time points
+    # Extract rotation axes and angles for all time points.
     rotation_axes = []
     rotation_angles = []
     
@@ -149,14 +155,14 @@ def plot_actual_attitude(simulation_data: dict):
         rotation_axes.append(axis)
         rotation_angles.append(angle)
     
-    # Convert to numpy arrays
+    # Convert to numpy arrays.
     rotation_axes = np.array(rotation_axes)  # Shape: (N, 3)
     rotation_angles = np.array(rotation_angles)  # Shape: (N,)
     
-    # Convert to degrees
+    # Convert to degrees.
     rotation_angles_deg = rotation_angles * 180 / np.pi
 
-    # Calculate body axis (boresight) trajectory from quaternions 
+    # Calculate body axis (boresight) trajectory from quaternions.
     body_axis_arr = []
     for i in range(len(q_0)):
         q = [q_0[i], q_1[i], q_2[i], q_3[i]]
@@ -169,10 +175,10 @@ def plot_actual_attitude(simulation_data: dict):
         body_axis = R @ np.array([1, 0, 0])  # body X-axis
         body_axis_arr.append(body_axis)
     
-    # Convert to numpy array for proper indexing
+    # Convert to numpy array for proper indexing.
     body_axis_arr = np.array(body_axis_arr)
 
-    # Calculate keep out zone margin angles between body axis and koz normal vector
+    # Calculate keep out zone margin angles between body axis and koz normal vector.
     margin_angles_koz = []
     for i in range(len(body_axis_arr)):
         cos_theta = np.dot(body_axis_arr[i], normal_vector_koz_array[0]) / (np.linalg.norm(body_axis_arr[i]) * np.linalg.norm(normal_vector_koz_array[0]))
@@ -183,10 +189,10 @@ def plot_actual_attitude(simulation_data: dict):
     
     fig = plt.figure(figsize=(18, 12))
     
-    # 3D Rotation Axis Trajectory (This is the key trajectory for phi angle!)
+    # 3D Rotation Axis Trajectory.
     ax1 = fig.add_subplot(231, projection="3d")
     
-    # Plot trajectory on unit sphere (rotation axes are unit vectors)
+    # Plot trajectory on unit sphere (rotation axes are unit vectors).
     ax1.plot(body_axis_arr[:, 0], body_axis_arr[:, 1], body_axis_arr[:, 2], "b-", alpha=0.7, linewidth=3, label="Boresight Axis Trajectory")
     ax1.plot(body_axis_arr[0, 0], body_axis_arr[0, 1], body_axis_arr[0, 2], color="green", label="Start")
     ax1.quiver(0, 0, 0, body_axis_arr[0, 0], body_axis_arr[0, 1], body_axis_arr[0, 2], color="green", arrow_length_ratio=0.1, linewidth=2)
@@ -194,22 +200,30 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.scatter(1, 0, 0, color="gold", s=150, marker="*", label="Target")
     
 
-    def _generate_keep_out_zone_circles():
-        # Create circle points for the keep out zone
+    def _generate_keep_out_zone_circles() -> list[list[np.ndarray]]:
+        """
+        Create circle points for the keep out zones.
+
+        Returns:
+            circle_points_array (list[list[ndarray]]): A list of lists containing the circle points
+        """
 
         theta = np.linspace(0, 2 * np.pi, 100)
         circle_points_array = []
 
+        # For each KOZ...
         for idx in range(len(normal_vector_koz_array)):
             circle_points = []
 
+            # Generate points on the circle in the plane perpendicular to the normal vector.
             for angle in theta:
-                # Generate points on the circle in the plane perpendicular to the normal vector
+                # Generate a point on the unit circle in the xy-plane.
                 v = np.array([np.cos(angle), np.sin(angle), 0])
 
-                # Rotate v to be perpendicular to koz_normal
+                # If the normal vector is [0, 0, 1], no rotation is needed.
                 if np.allclose(normal_vector_koz_array[idx], [0, 0, 1]):
                     rot_axis = np.array([1, 0, 0])
+                # Otherwise, rotate v to be perpendicular to the normal vector.
                 else:
                     rot_axis = np.cross([0, 0, 1], normal_vector_koz_array[idx])
                     rot_axis /= np.linalg.norm(rot_axis)
@@ -230,7 +244,7 @@ def plot_actual_attitude(simulation_data: dict):
 
         return circle_points_array
 
-    # Plot keep out zone as a ring on the unit sphere
+    # Plot keep out zone as a ring on the unit sphere.
     if normal_vector_koz_array is not None and half_angle_koz_array is not None:
         circle_points_array = _generate_keep_out_zone_circles()
         circle_points_array = np.array(circle_points_array)
@@ -240,7 +254,7 @@ def plot_actual_attitude(simulation_data: dict):
         ax1.plot(circle_points_array[2][:, 0], circle_points_array[2][:, 1], circle_points_array[2][:, 2], "purple", linewidth=2, label="Keep Out Zone 3") if len(normal_vector_koz_array) > 2 else None
     
     
-    # Draw unit sphere wireframe
+    # Draw unit sphere wireframe.
     u = np.linspace(0, 2 * np.pi, 20)
     v = np.linspace(0, np.pi, 20)
     sphere_x = np.outer(np.cos(u), np.sin(v))
@@ -257,7 +271,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax1.set_title("3D Boresight Trajectory on Unit Sphere")
     ax1.legend()
     
-    # Rotation angle φ vs time (same as in reward function)
+    # Rotation angle phi vs time (same as in reward function).
     ax2 = fig.add_subplot(232)
     ax2.plot(times[:len(rotation_angles_deg)], rotation_angles_deg, "purple", linewidth=3, label="Angle $\\phi$")
     ax2.axhline(y=2.0, color="r", linestyle="--", linewidth=2, label="Target (2.0°)")
@@ -268,7 +282,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax2.legend()
     ax2.set_yscale("log")
 
-    # Plot wheel velocities
+    # Plot wheel velocities.
     ax3 = fig.add_subplot(233)
     ax3.plot(times, wheel_velocities[:, 0], label="$\\omega_1$")
     ax3.plot(times, wheel_velocities[:, 1], label="$\\omega_2$")
@@ -279,7 +293,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax3.legend()
     ax3.grid()
     
-    # Plot margin angle for keep out zone
+    # Plot margin angle for keep out zone.
     ax4 = fig.add_subplot(234)
     ax4.plot(times, margin_angles_koz, label="Margin Angle KOZ")
     ax4.set_title("Margin Angle to Keep Out Zone")
@@ -287,7 +301,7 @@ def plot_actual_attitude(simulation_data: dict):
     ax4.legend()
     ax4.grid()
 
-    # Plot angular velocity
+    # Plot angular velocity.
     ax5 = fig.add_subplot(235)
     ax5.plot(times, omega_x * (180 / np.pi), label="$\\omega_x$")
     ax5.plot(times, omega_y * (180 / np.pi), label="$\\omega_y$")
@@ -296,7 +310,8 @@ def plot_actual_attitude(simulation_data: dict):
     ax5.set_ylabel("$\\omega$ (deg/s)")
     ax5.legend()
     ax5.grid()
-    # Plot torque input
+
+    # Plot torque.
     ax6 = fig.add_subplot(236)
     ax6.plot(times, torques_array[:, 0], label="$\\tau_1$")
     ax6.plot(times, torques_array[:, 1], label="$\\tau_2$")
@@ -309,13 +324,11 @@ def plot_actual_attitude(simulation_data: dict):
     
     plt.tight_layout()
     plt.show()
-    
-    return
+
 
 if __name__ == "__main__":
     # Set the torques in action_schedule()
 
-    # [min_initial_angle, max_initial_angle, min_initial_angular_velocity, max_initial_angular_velocity, max_steps, min_half_angle_koz, max_half_angle_koz]
     INITIAL_STATE = [
         Config.EnvSimulator.MIN_INITIAL_ERROR_ANGLE,
         Config.EnvSimulator.MAX_INITIAL_ERROR_ANGLE,
@@ -327,6 +340,7 @@ if __name__ == "__main__":
         Config.EnvSimulator.MIN_NR_KOZ,
         Config.EnvSimulator.MAX_NR_KOZ
     ] 
+    
     env = create_simulation_env(INITIAL_STATE, Config.EnvSimulator.PHASE_TYPE)
     simulation_data = start_simulation(env)
     plot_actual_attitude(simulation_data)
