@@ -27,7 +27,8 @@
         "MIN_HALF_ANGLE_KOZ": 15.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
         "MIN_NR_KOZ": 0,
-        "MAX_NR_KOZ": 0
+        "MAX_NR_KOZ": 0,
+        "MARGIN_KOZ": 0.0
     },
 
     "visualization": {
@@ -42,7 +43,8 @@
         "MIN_HALF_ANGLE_KOZ": 15.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
         "MIN_NR_KOZ": 1,
-        "MAX_NR_KOZ": 3
+        "MAX_NR_KOZ": 3,
+        "MARGIN_KOZ": 0.0
     },
 
     "env_simulator": {
@@ -54,7 +56,8 @@
         "MIN_HALF_ANGLE_KOZ": 30.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
         "MIN_NR_KOZ": 1,
-        "MAX_NR_KOZ": 1
+        "MAX_NR_KOZ": 1,
+        "MARGIN_KOZ": 0.0
     }
 }
 

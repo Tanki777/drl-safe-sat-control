@@ -338,7 +338,8 @@ if __name__ == "__main__":
         Config.EnvSimulator.MIN_HALF_ANGLE_KOZ,
         Config.EnvSimulator.MAX_HALF_ANGLE_KOZ,
         Config.EnvSimulator.MIN_NR_KOZ,
-        Config.EnvSimulator.MAX_NR_KOZ
+        Config.EnvSimulator.MAX_NR_KOZ,
+        Config.EnvSimulator.MARGIN_KOZ
     ] 
     
     env = create_simulation_env(INITIAL_STATE)

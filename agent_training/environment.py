@@ -461,6 +461,7 @@ class BasiliskRWEnv(gym.Env):
             self.max_half_angle_koz = 0.0  # degrees
             self.min_nr_koz = 0
             self.max_nr_koz = 0
+            self.margin_koz = 0
         else:
             self.min_initial_angle = initial_state[0]
             self.max_initial_angle = initial_state[1]
@@ -471,6 +472,7 @@ class BasiliskRWEnv(gym.Env):
             self.max_half_angle_koz = initial_state[6]
             self.min_nr_koz = initial_state[7]
             self.max_nr_koz = initial_state[8]
+            self.margin_koz = initial_state[9]
 
         self.discount_factor = discount_factor # gamma
 
@@ -584,8 +586,7 @@ class BasiliskRWEnv(gym.Env):
             return
         else:
             # Minimum margin angle between two KOZs
-            #MARGIN = 20.0 * np.pi / 180.0
-            MARGIN = 0 * np.pi / 180.0
+            MARGIN_RAD_MIN = self.margin_koz * np.pi / 180.0
 
             # For each additional KOZ, generate another KOZ
             for koz_nr in range(2, self.current_nr_koz+1):
@@ -602,7 +603,7 @@ class BasiliskRWEnv(gym.Env):
 
                 # Rotate the bisector by a deviation angle using rodrigues formula
                 # Deviation angle from first KOZ is chosen to guarantee min margin between KOZs and some deviation for new KOZ
-                deviation_angle = half_angle_koz_1 + MARGIN + half_angle_koz + np.random.uniform(0, half_angle_koz)
+                deviation_angle = half_angle_koz_1 + MARGIN_RAD_MIN + half_angle_koz + np.random.uniform(0, half_angle_koz)
                 
                 deviation_angle = deviation_angle * direction
 

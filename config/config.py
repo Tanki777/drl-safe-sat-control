@@ -44,6 +44,7 @@ class Config():
         MAX_HALF_ANGLE_KOZ = config_data["evaluation"]["MAX_HALF_ANGLE_KOZ"]
         MIN_NR_KOZ = config_data["evaluation"]["MIN_NR_KOZ"]
         MAX_NR_KOZ = config_data["evaluation"]["MAX_NR_KOZ"]
+        MARGIN_KOZ = config_data["evaluation"]["MARGIN_KOZ"]
 
     class Visualization():
         CONTROLLER = config_data["visualization"].get("CONTROLLER", "DRL")
@@ -58,6 +59,7 @@ class Config():
         MAX_HALF_ANGLE_KOZ = config_data["visualization"]["MAX_HALF_ANGLE_KOZ"]
         MIN_NR_KOZ = config_data["visualization"]["MIN_NR_KOZ"]
         MAX_NR_KOZ = config_data["visualization"]["MAX_NR_KOZ"]
+        MARGIN_KOZ = config_data["visualization"]["MARGIN_KOZ"]
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]
@@ -69,6 +71,7 @@ class Config():
         MAX_HALF_ANGLE_KOZ = config_data["env_simulator"]["MAX_HALF_ANGLE_KOZ"]
         MIN_NR_KOZ = config_data["env_simulator"]["MIN_NR_KOZ"]
         MAX_NR_KOZ = config_data["env_simulator"]["MAX_NR_KOZ"]
+        MARGIN_KOZ = config_data["env_simulator"]["MARGIN_KOZ"]
 
     
 config = Config()

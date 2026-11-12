@@ -518,6 +518,7 @@ if __name__ == "__main__":
         Config.Evaluation.MAX_HALF_ANGLE_KOZ,
         Config.Evaluation.MIN_NR_KOZ,
         Config.Evaluation.MAX_NR_KOZ,
+        Config.Evaluation.MARGIN_KOZ
     ]
 
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes. """

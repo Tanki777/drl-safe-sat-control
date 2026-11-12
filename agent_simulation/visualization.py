@@ -723,7 +723,8 @@ if __name__ == "__main__":
         Config.Visualization.MIN_HALF_ANGLE_KOZ,
         Config.Visualization.MAX_HALF_ANGLE_KOZ,
         Config.Visualization.MIN_NR_KOZ,
-        Config.Visualization.MAX_NR_KOZ
+        Config.Visualization.MAX_NR_KOZ,
+        Config.Visualization.MARGIN_KOZ
     ]
 
     CONTROLLER = Config.Visualization.CONTROLLER.upper()
