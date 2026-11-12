@@ -1,3 +1,9 @@
+"""
+Contains 3D visualization utilities to start a Viser server and visualize episodes.
+
+Author: Cemal Yilmaz - 2026
+"""
+
 import os
 import sys
 import threading
@@ -47,6 +53,10 @@ class EpisodePlaybackController:
     """
 
     def __init__(self, server: viser.ViserServer) -> None:
+        """
+        Initializes the episode playback controller.
+        """
+
         self.server = server
         
 
@@ -76,9 +86,14 @@ class EpisodePlaybackController:
             self._switch_evaluation_file(self._evaluation_files[0])
 
     def _create_scene_objects(self) -> None:
+        """
+        Creates the scene objects for the current episode (KOZs, target, satellite, trajectory).
+        """
+
         self._clear_koz()
         koz_cnt = len(self.episode_data["normal_vector_koz_array"])
-    
+
+        # Add KOZs to the scene.
         for koz_idx in range(koz_cnt):
             self.koz_handles.append(add_koz(
                 self.server,
@@ -128,6 +143,9 @@ class EpisodePlaybackController:
     def _switch_evaluation_file(self, file_name: str) -> None:
         """
         Switch to a different evaluation file.
+
+        Args:
+            file_name (str): The name of the evaluation file to switch to.
         """
 
         # Use a lock to prevent concurrent access to the data while loading a new file.
@@ -163,7 +181,7 @@ class EpisodePlaybackController:
             try:
                 episodes = load_evaluation_data(file_name)
                 if not episodes:
-                    raise ValueError(f"Evaluation file {file_name!r} has no episodes")
+                    raise ValueError(f"Evaluation file {file_name} has no episodes")
 
                 # Update GUI elements with the new file episodes.
                 self._episodes = episodes
@@ -192,7 +210,7 @@ class EpisodePlaybackController:
                 self.trajectory_points = None
                 self._disable_playback_gui()
                 self.gui_loading_status.content = f"Could not load evaluation file: {exc}"
-                print(f"Could not load evaluation file {file_name!r}: {exc}")
+                print(f"Could not load evaluation file {file_name}: {exc}")
 
             # Enable the evaluation file dropdown regardless of success or failure.    
             finally:
@@ -201,6 +219,9 @@ class EpisodePlaybackController:
     def _load_episode(self, episode_nr: str) -> None:
         """
         Loads a specific episode from the currently loaded evaluation file.
+
+        Args:
+            episode_nr (str): The episode number to load.
         """
 
         # Use a lock to prevent concurrent access to the data while loading a new episode.
@@ -242,6 +263,10 @@ class EpisodePlaybackController:
             handle.disabled = True
 
     def _enable_playback_gui(self) -> None:
+        """
+        Enables all playback GUI elements.
+        """
+
         # Playback
         self.gui_playing.disabled = False
         self.gui_timestep.disabled = False
@@ -264,12 +289,18 @@ class EpisodePlaybackController:
         self.command_load_next_episode.disabled = False
 
     def _reset_episode(self) -> None:
+        """
+        Resets the episode to its initial state.
+        """
   
         self.gui_playing.value = False
         self.gui_timestep.value = 0
         self.set_frame(0)
 
     def _create_gui(self) -> None:
+        """
+        Creates the GUI elements for episode selection, playback, and display.
+        """
 
         # Set label name of the GUI panel.
         self.server.gui.set_panel_label("Episode viewer")
@@ -279,10 +310,11 @@ class EpisodePlaybackController:
             self._evaluation_files = sorted(
                 name for name in os.listdir(eval_data_dir) if name.endswith(".npz")
             ) if os.path.isdir(eval_data_dir) else []
+
             file_options = self._evaluation_files or ("No evaluation files found",)
             disabled = not self._evaluation_files
 
-            # Add a dropdown menu to list all evaluation files. For some reason it is bugged if not using the extra comma here...
+            # Add a dropdown menu to list all evaluation files.
             self.gui_evaluation_file = self.server.gui.add_dropdown("Evaluation file", options=file_options, disabled=disabled)
 
             # Add a dropdown menu to select the episode among the episodes of the selected file.
@@ -297,9 +329,7 @@ class EpisodePlaybackController:
             # Add a button to load next episode
             self.gui_load_episode_next = self.server.gui.add_button("Load next episode", disabled=True)
 
-            self.gui_loading_status = self.server.gui.add_markdown(
-                "Select an evaluation file." if self._evaluation_files else "No evaluation files found."
-            )
+            self.gui_loading_status = self.server.gui.add_markdown("Select an evaluation file." if self._evaluation_files else "No evaluation files found.")
 
             
         # Add a playback GUI folder.
@@ -361,6 +391,9 @@ class EpisodePlaybackController:
         self.command_load_next_episode = self.server.gui.add_command(label="Load next episode", hotkey="x", disabled=True)
 
     def _register_callbacks(self) -> None:
+        """
+        Registers callbacks for GUI interactions and commands.
+        """
 
         # On updating evaluation file selection, update episode GUI selection.
         @self.gui_evaluation_file.on_update
@@ -368,13 +401,12 @@ class EpisodePlaybackController:
 
             self._switch_evaluation_file(self.gui_evaluation_file.value)
 
-        # On clicking load episode button, load episode
+        # On clicking load episode button, load episode.
         @self.gui_load_episode.on_click
         def _(_) -> None:
-            # TODO: dont load if same episode as before
             self._load_episode(self.gui_selected_episode.value)
 
-        # On clicking load previous episode button, load previous episode
+        # On clicking load previous episode button, load previous episode.
         @self.gui_load_episode_previous.on_click
         def _(_) -> None:
             current_episode = int(self.gui_selected_episode.value)
@@ -382,7 +414,7 @@ class EpisodePlaybackController:
             self.gui_selected_episode.value = str(previous_episode)
             self._load_episode(self.gui_selected_episode.value)
 
-        # On clicking load next episode button, load next episode
+        # On clicking load next episode button, load next episode.
         @self.gui_load_episode_next.on_click
         def _(_) -> None:
             current_episode = int(self.gui_selected_episode.value)
@@ -490,6 +522,9 @@ class EpisodePlaybackController:
     def _update_trajectory(self, frame_index: int) -> None:
         """
         Updates trajectory path per frame.
+
+        Args:
+            frame_index (int): The current frame index to update the trajectory for.
         """
         
         # If selected to show entire episode trajectory, show all trajectory points.
@@ -499,15 +534,23 @@ class EpisodePlaybackController:
         else:
             points = self.trajectory_points[: frame_index + 1]
 
+        # At least two points are needed to draw a segment, so duplicate first point.
         if len(points) < 2:
-            # add_line_segments and its update expect at least one segment.
             points = np.vstack((points[0], points[0]))
 
+        # Create line segments from consecutive points.
         segments = np.stack((points[:-1], points[1:]), axis=1)
 
         self.trajectory_handle.points = segments
 
     def _get_speed_multiplier(self) -> float:
+        """
+        Returns the speed multiplier as float based on the selected GUI speed string.
+
+        Returns:
+            float: The speed multiplier.
+        """
+
         speed_lookup = {
             "0.25x": 0.25,
             "0.5x": 0.5,
@@ -520,7 +563,10 @@ class EpisodePlaybackController:
 
     def set_frame(self, frame_index: int) -> None:
         """
-        Sets a specific frame number.
+        Sets a specific frame number using a lock.
+
+        Args:
+            frame_index (int): The frame index to set.
         """
 
         # Use a lock to prevent concurrent access to the data while setting a new frame.
@@ -530,6 +576,13 @@ class EpisodePlaybackController:
             self._set_frame(frame_index)
 
     def _set_frame(self, frame_index: int) -> None:
+        """
+        Sets a specific frame number from set_frame().
+
+        Args:
+            frame_index (int): The frame index to set.
+        """
+
         frame_index = int(np.clip(frame_index, 0, self.num_frames - 1))
 
         quaternion = self.quaternions[frame_index]
@@ -600,15 +653,15 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
     Adds a simple satellite body and body axes.
 
     Args:
-        server: Viser server to add objects to scene.
-        init_attitude: Initial attitude quaternion.
+        server (ViserServer): Viser server to add objects to scene.
+        init_attitude (ndarray): Initial attitude quaternion.
     Returns:
-        satellite_frame: The satellite frame.
+        satellite_frame (FrameHandle): The satellite frame.
     """
 
     initial_attitude = init_attitude
 
-    # Add parent frame
+    # Add parent frame.
     satellite_frame = server.scene.add_frame(
         name="/satellite",
         show_axes=False,
@@ -616,7 +669,7 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
         position=(0.0, 0.0, 0.0)
     )
 
-    # Add body
+    # Add body and satellite asset.
     server.scene.add_glb(
         name="/satellite/body",
         glb_data=(Path(__file__).resolve().parent.parent / "assets" / "cubesat.glb").read_bytes(),
@@ -625,7 +678,7 @@ def add_satellite(server: viser.ViserServer, init_attitude: np.ndarray) -> viser
 
     origin = [0.0, 0.0, 0.0]
 
-    # Define body axes as arrows
+    # Define body axes as arrows.
     axes_points = np.array([
         [origin, [1.0, 0.0, 0.0]], # X axis (boresight)
         [origin, [0.0, 1.0, 0.0]], # Y axis
@@ -656,9 +709,9 @@ def create_orthonormal_basis(normal_vector: np.ndarray) -> tuple[np.ndarray, np.
     (u, v, normal_vector) forms an orthonormal basis.
 
     Args:
-        normal_vector: The normal vector from which to create the basis.
+        normal_vector (ndarray): The normal vector from which to create the basis.
     Returns:
-        tuple: (u, v).
+        tuple ((ndarray, ndarray)): (u, v).
     """
 
     # Select a reference vector that is not almost parallel to normal.
@@ -678,10 +731,10 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
     Creates a part of a spherical triangle mesh and its border points for a keep-out zone.
 
     Args:
-        normal_vector: Keep-out zone normal vector in world frame.
-        half_angle: Keep-out zone half angle in rad.
+        normal_vector (ndarray): Keep-out zone normal vector in world frame.
+        half_angle (float): Keep-out zone half angle in rad.
     Returns:
-        tuple: (vertices_array, faces_array, border).
+        tuple ((ndarray, ndarray, ndarray)): (vertices_array, faces_array, border).
     """
     
     radius_sphere = 1.0
@@ -701,17 +754,8 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
 
         for segment_index in range(segments_angular):
             phi = 2.0 * np.pi * segment_index / segments_angular
-
-            tangent_direction = (
-                np.cos(phi) * basis_u
-                + np.sin(phi) * basis_v
-            )
-
-            point = radius_sphere * (
-                np.cos(theta) * normal_vector
-                + np.sin(theta) * tangent_direction
-            )
-
+            tangent_direction = (np.cos(phi) * basis_u + np.sin(phi) * basis_v)
+            point = radius_sphere * (np.cos(theta) * normal_vector + np.sin(theta) * tangent_direction)
             vertices.append(point)
 
     faces: list[tuple[int, int, int]] = []
@@ -722,13 +766,7 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
     for segment_index in range(segments_angular):
         next_segment = (segment_index + 1) % segments_angular
 
-        faces.append(
-            (
-                0,
-                first_ring_start + segment_index,
-                first_ring_start + next_segment
-            )
-        )
+        faces.append((0, first_ring_start + segment_index, first_ring_start + next_segment))
 
     # Triangles connecting the remaining adjacent rings.
     for ring_index in range(1, segments_radial):
@@ -743,46 +781,32 @@ def create_koz_mesh(normal_vector: np.ndarray, half_angle: float) -> tuple[np.nd
             outer_current = outer_ring_start + segment_index
             outer_next = outer_ring_start + next_segment
 
-            faces.append(
-                (
-                    inner_current,
-                    outer_current,
-                    outer_next
-                )
-            )
-            faces.append(
-                (
-                    inner_current,
-                    outer_next,
-                    inner_next
-                )
-            )
+            faces.append((inner_current, outer_current, outer_next))
+            faces.append((inner_current, outer_next, inner_next))
 
     vertices_array = np.asarray(vertices, dtype=np.float32)
     faces_array = np.asarray(faces, dtype=np.uint32)
 
-    # Repeat first point at the end to close the border polyline.
+    # Repeat first point at the end to close the border line.
     border_start = 1 + (segments_radial - 1) * segments_angular
-    border = vertices_array[
-        border_start:border_start + segments_angular
-    ]
+    border = vertices_array[border_start:border_start + segments_angular]
     border = np.vstack((border, border[0]))
 
     return vertices_array, faces_array, border
 
 
-def add_koz(server: viser.ViserServer, name: str, normal_vector: np.ndarray, half_angle: float, color: tuple):
+def add_koz(server: viser.ViserServer, name: str, normal_vector: np.ndarray, half_angle: float, color: tuple) -> tuple[viser.MeshHandle, viser.LineSegmentsHandle]:
     """
     Adds a keep-out zone.
 
     Args:
-        server: Viser server to add objects to scene.
-        name: Keep-out zone name.
-        normal_vector: Keep-out zone normal vector in world frame.
-        half_angle: Keep-out zone half angle in rad.
-        color: RGB color.
+        server (ViserServer): Viser server to add objects to scene.
+        name (str): Keep-out zone name.
+        normal_vector (ndarray): Keep-out zone normal vector in world frame.
+        half_angle (float): Keep-out zone half angle in rad.
+        color (tuple): RGB color.
     Returns:
-        tuple: (koz_handle, border_handle).
+        tuple (MeshHandle, LineSegmentsHandle): (koz_handle, border_handle).
     """
 
     # Create mesh
@@ -821,7 +845,7 @@ def add_target(server: viser.ViserServer):
     Adds the target.
 
     Args:
-        server: Viser server to add objects to scene.
+        server (ViserServer): Viser server to add objects to scene.
     """
 
     segments_angular = 96
@@ -830,26 +854,19 @@ def add_target(server: viser.ViserServer):
 
     basis_u, basis_v = create_orthonormal_basis(normal_vector)
 
-    phi = np.linspace(
-        0.0,
-        2.0 * np.pi,
-        segments_angular,
-        endpoint=False
-    )
+    # Create angles for the circle points.
+    phi = np.linspace(0.0, 2.0 * np.pi, segments_angular, endpoint=False)
 
-    tangent_directions = (
-        np.cos(phi)[:, None] * basis_u[None, :]
-        + np.sin(phi)[:, None] * basis_v[None, :]
-    )
+    # Create tangent directions for each angle.
+    tangent_directions = (np.cos(phi)[:, None] * basis_u[None, :] + np.sin(phi)[:, None] * basis_v[None, :])
 
-    points = (
-        np.cos(radius) * normal_vector[None, :]
-        + np.sin(radius) * tangent_directions
-    )
+    # Compute the points on the circle.
+    points = (np.cos(radius) * normal_vector[None, :] + np.sin(radius) * tangent_directions)
 
     # Close the circle.
     points = np.vstack((points, points[0]))
 
+    # Stack consecutive points to create line segments for the border.
     points_stacked = np.stack((points[:-1], points[1:]), axis=1)
 
     server.scene.add_line_segments(
@@ -861,6 +878,10 @@ def add_target(server: viser.ViserServer):
 
 
 def start_server():
+    """
+    Starts the Viser server.
+    """
+
     print(f"|---{YELLOW_START}Starting Viser server...{COLOR_END}")
 
     server = viser.ViserServer()
