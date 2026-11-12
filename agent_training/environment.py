@@ -305,7 +305,7 @@ def build_basilisk_sim(omega_wheel_init: np.ndarray, satellite: spacecraft.Space
     return sim, rw_cmd_msg, rw_effector
 
 
-def reward_function(state: np.ndarray, _q0_prev: np.ndarray, torque: np.ndarray, torque_prev: np.ndarray, phase: str, state_koz: np.ndarray, koz_violation_cnt: int, time_elapsed: float, termination: bool, discount_factor: float, koz_margin_min_prev: float) -> float:
+def reward_function(state: np.ndarray, _q0_prev: np.ndarray, torque: np.ndarray, torque_prev: np.ndarray, state_koz: np.ndarray, koz_violation_cnt: int, time_elapsed: float, termination: bool, discount_factor: float, koz_margin_min_prev: float) -> float:
     """
     Calculates the reward based on the current state and additional parameters.
     Some parameters are only used for archived reward functions and are kept for compatibility.
@@ -315,7 +315,6 @@ def reward_function(state: np.ndarray, _q0_prev: np.ndarray, torque: np.ndarray,
         _q0_prev (float): The previous quaternion scalar component.
         torque (ndarray): The current torque applied to the satellite.
         torque_prev (ndarray): The previous torque applied to the satellite.
-        phase (str): The current phase ("phase 1" or "phase 2").
         state_koz (ndarray): The current state of the keep out zones.
         koz_violation_cnt (int): The count of keep out zone violations.
         time_elapsed (float): The elapsed time in the episode.
@@ -368,45 +367,31 @@ def reward_function(state: np.ndarray, _q0_prev: np.ndarray, torque: np.ndarray,
 
         # Reward for reducing attitude error
         r_err = 0 
-        # Phase 1
-        if phase == "phase 1":
+        if koz_margin_min > 0.17:
             r_err = -err_phi_delta
-            
-        # Phase 2
-        else:      
-            if koz_margin_min > 0.17:
-                r_err = -err_phi_delta
-            elif koz_margin_min > 0:
-                r_err = -err_phi_delta * (koz_margin_min/0.17)
-            else:
-                r_err = 0
+        elif koz_margin_min > 0:
+            r_err = -err_phi_delta * (koz_margin_min/0.17)
+        else:
+            r_err = 0
             
         # Bonus for high accuracy
-        r_acc = 0.0
-        if phase == "phase 1":
-            # Bonus for desired accuracy
-            r_acc = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
+        r_acc = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
             
-        elif phase == "phase 2":
-            # Bonus for desired accuracy
-            r_acc = 0.06 * np.exp(-((err_phi_current * 2.0) ** 2.0))
-            
-
         # Penalty for using large torques
         r_torque = - 1.0*(abs(torque_1)+abs(torque_2)+abs(torque_3))
 
         # Penalty for entering / being close to keep out zone
         r_koz = 0.0
-        if phase == "phase 2":
-            # Maximum penalty inside of KOZ
-            if koz_margin_min <= 0.0:
-                r_koz = -1.0
-            # Gradial penalty starting at 0.17 rad or 9.7 deg margin
-            elif koz_margin_min <= 0.17:
-                r_koz = -1.0 * (1.0 - koz_margin_min/0.17)
-            # No penalty if farther away
-            else:
-                r_koz = 0.0
+        
+        # Maximum penalty inside of KOZ
+        if koz_margin_min <= 0.0:
+            r_koz = -1.0
+        # Gradial penalty starting at 0.17 rad or 9.7 deg margin
+        elif koz_margin_min <= 0.17:
+            r_koz = -1.0 * (1.0 - koz_margin_min/0.17)
+        # No penalty if farther away
+        else:
+            r_koz = 0.0
 
         r_total = r_err + r_acc + r_torque + r_koz
 
@@ -418,7 +403,7 @@ class BasiliskRWEnv(gym.Env):
     A custom environment for the Basilisk RW simulation.
     """
 
-    def __init__(self, initial_state=None, phase_type=None, discount_factor=0.99):
+    def __init__(self, initial_state=None, discount_factor=0.99):
         super(BasiliskRWEnv).__init__()
 
         self.episode_count = 0
@@ -487,7 +472,6 @@ class BasiliskRWEnv(gym.Env):
             self.min_nr_koz = initial_state[7]
             self.max_nr_koz = initial_state[8]
 
-        self.PHASE = phase_type
         self.discount_factor = discount_factor # gamma
 
         # Custom metrics tracking for TensorBoard
@@ -895,7 +879,7 @@ class BasiliskRWEnv(gym.Env):
         #termination = self._determine_termination()
         termination = "" # Never terminate early for this reward function.
 
-        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.PHASE, self.state["zones"], self.entered_koz_count, self.steps*self.dt, termination, self.discount_factor, koz_margin_min_prev)
+        reward = reward_function(self.state["satellite"], q0_prev, action * Constants.TORQUE_WHEEL_MAX, self.torque_prev, self.state["zones"], self.entered_koz_count, self.steps*self.dt, termination, self.discount_factor, koz_margin_min_prev)
 
         # Update previous torque for the next step
         self.torque_prev = action * Constants.TORQUE_WHEEL_MAX  

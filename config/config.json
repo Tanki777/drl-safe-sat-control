@@ -18,7 +18,6 @@
     "evaluation": {
         "CONTROLLER": "DRL",
         "MODEL_NAME": "rewMod224ph2c2_fast_kozMinMargin0_schedFullv1c3",
-        "PHASE_TYPE": "phase 2",
         "TIMESTEP": 54000000,
         "MAX_STEPS": 3000,
         "MIN_INITIAL_ERROR_ANGLE": 90.0,
@@ -34,7 +33,6 @@
     "visualization": {
         "CONTROLLER": "DRL",
         "MODEL_NAME": "rewMod224ph2c2_fast_kozMinMargin0_schedFullv1c3",
-        "PHASE_TYPE": "phase 2",
         "TIMESTEP": 54000000,
         "MAX_STEPS": 3000,
         "MIN_INITIAL_ERROR_ANGLE": 90.0,
@@ -43,13 +41,12 @@
         "MAX_INITIAL_ANGULAR_VELOCITY": 0.01,
         "MIN_HALF_ANGLE_KOZ": 15.0,
         "MAX_HALF_ANGLE_KOZ": 30.0,
-        "MIN_NR_KOZ": 0,
-        "MAX_NR_KOZ": 0
+        "MIN_NR_KOZ": 1,
+        "MAX_NR_KOZ": 3
     },
 
     "env_simulator": {
         "MAX_STEPS": 3000,
-        "PHASE_TYPE": "phase_2",
         "MIN_INITIAL_ERROR_ANGLE": 90.0,
         "MAX_INITIAL_ERROR_ANGLE": 90.0,
         "MIN_INITIAL_ANGULAR_VELOCITY": 0.0,

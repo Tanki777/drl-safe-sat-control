@@ -35,7 +35,6 @@ class Config():
         CONTROLLER = config_data["evaluation"].get("CONTROLLER", "DRL")
         MODEL_NAME = config_data["evaluation"]["MODEL_NAME"]
         TIMESTEP = config_data["evaluation"]["TIMESTEP"]
-        PHASE_TYPE = config_data["evaluation"]["PHASE_TYPE"]
         MAX_STEPS = config_data["evaluation"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["evaluation"]["MAX_INITIAL_ERROR_ANGLE"]
@@ -50,7 +49,6 @@ class Config():
         CONTROLLER = config_data["visualization"].get("CONTROLLER", "DRL")
         MODEL_NAME = config_data["visualization"]["MODEL_NAME"]
         TIMESTEP = config_data["visualization"]["TIMESTEP"]
-        PHASE_TYPE = config_data["visualization"]["PHASE_TYPE"]
         MAX_STEPS = config_data["visualization"]["MAX_STEPS"]
         MIN_INITIAL_ERROR_ANGLE = config_data["visualization"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["visualization"]["MAX_INITIAL_ERROR_ANGLE"]
@@ -63,7 +61,6 @@ class Config():
 
     class EnvSimulator():
         MAX_STEPS = config_data["env_simulator"]["MAX_STEPS"]
-        PHASE_TYPE = config_data["env_simulator"]["PHASE_TYPE"]
         MIN_INITIAL_ERROR_ANGLE = config_data["env_simulator"]["MIN_INITIAL_ERROR_ANGLE"]
         MAX_INITIAL_ERROR_ANGLE = config_data["env_simulator"]["MAX_INITIAL_ERROR_ANGLE"]
         MIN_INITIAL_ANGULAR_VELOCITY = config_data["env_simulator"]["MIN_INITIAL_ANGULAR_VELOCITY"]

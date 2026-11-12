@@ -726,12 +726,11 @@ if __name__ == "__main__":
         Config.Visualization.MAX_NR_KOZ
     ]
 
-    PHASE_TYPE = Config.Visualization.PHASE_TYPE
     CONTROLLER = Config.Visualization.CONTROLLER.upper()
 
     time_human = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
-    eval_env = create_evaluation_env(PHASE_TYPE, INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, controller=CONTROLLER)
+    eval_env = create_evaluation_env(INITIAL_STATE, Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, controller=CONTROLLER)
     model = load_agent(Config.Visualization.MODEL_NAME, Config.Visualization.TIMESTEP, seed_random = True) if CONTROLLER == "DRL" else None
 
     """ Uncomment the lines below to run 1 simulation and plot the results (debug plot format). """

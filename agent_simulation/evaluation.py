@@ -59,12 +59,11 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False) -> SAC
     return model
 
 
-def create_evaluation_env(phase_type: str, initial_state: list, model_name: str, timestep: int, controller: str = "DRL") -> VecNormalize|DummyVecEnv:
+def create_evaluation_env(initial_state: list, model_name: str, timestep: int, controller: str = "DRL") -> VecNormalize|DummyVecEnv:
     """
     Create the evaluation environment.
 
     Args:
-        phase_type (str): String phase type, e.g. phase 1 or 2.
         initial_state (list): Initial state configuration for environment.
         model_name (str): Name of the DRL model. Unused for the APF controller.
         timestep (int): Training timestep of the DRL model. Unused for the APF controller.
@@ -77,7 +76,7 @@ def create_evaluation_env(phase_type: str, initial_state: list, model_name: str,
     if controller not in ("DRL", "APF"):
         raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
 
-    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)])
+    eval_env = DummyVecEnv([lambda: BasiliskRWEnv(initial_state=initial_state)])
 
     if controller == "DRL":
         vec_normalize_path = f"models/{model_name}/{model_name}_{timestep}_vecnormalize.pkl"
@@ -247,7 +246,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, contro
     return simulation_data
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int, controller: str = "DRL") -> dict:
+def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, worker_id: int, controller: str = "DRL") -> dict:
     """
     Worker function to evaluate the DRL or APF controller for a subset of episodes.
     This function will be run in parallel by multiple processes.
@@ -255,7 +254,6 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
     Args:
         model_name (str): Name of the model file (without .zip extension) or APF evaluation label.
         timestep (int): Training timestep of the DRL model. Unused for the APF controller.
-        phase_type (str): String phase type e.g. phase 1, 2, transition etc.
         initial_state (list): Initial state configuration for environment.
         max_steps (int): Maximum steps per episode.
         episodes (int): Number of episodes to run.
@@ -271,7 +269,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
     model = load_agent(model_name, timestep) if controller == "DRL" else None
     
     # Create environment in worker process
-    eval_env = create_evaluation_env(phase_type, initial_state, model_name, timestep, controller=controller)
+    eval_env = create_evaluation_env(initial_state, model_name, timestep, controller=controller)
     
     koz_violation_episodes = 0
     ep_rewards = []
@@ -321,14 +319,13 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4, controller: str = "DRL") -> None:
+def evaluate_agent(model_name: str, timestep: int, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4, controller: str = "DRL") -> None:
     """
     Simulate the DRL or APF controller in parallel using multiple processes and save the data at the end.
 
     Args:
         model_name (str): Name of the model file (without .zip extension) or APF evaluation label.
         timestep (int): Training timestep of the DRL model. Unused for the APF controller.
-        phase_type (str): String phase type e.g. phase 1, 2, transition etc.
         initial_state (list): Initial state configuration for environment.
         max_steps (int): Maximum steps per episode.
         episodes (int): Total number of episodes to run.
@@ -361,7 +358,7 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
         for worker_id in range(num_workers):
             result = pool.apply_async(
                 evaluate_agent_worker,
-                args=(model_name, timestep, phase_type, initial_state, max_steps, episode_counts[worker_id], worker_id, controller)
+                args=(model_name, timestep, initial_state, max_steps, episode_counts[worker_id], worker_id, controller)
             )
             results.append(result)
         
@@ -523,8 +520,6 @@ if __name__ == "__main__":
         Config.Evaluation.MAX_NR_KOZ,
     ]
 
-    PHASE_TYPE = Config.Evaluation.PHASE_TYPE
-
     """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes. """
     #loaded = load_evaluation_data("")
     #calc_metrics(loaded)
@@ -532,7 +527,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    #evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
+    #evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
     t_end = time.time()
 
     print()

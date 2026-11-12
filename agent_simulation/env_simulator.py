@@ -22,7 +22,7 @@ from agent_training.environment import BasiliskRWEnv
 from agent_training.constants import Constants
 
 
-def create_simulation_env(initial_state: list, phase_type: str) -> BasiliskRWEnv:
+def create_simulation_env(initial_state: list) -> BasiliskRWEnv:
     """
     Create the simulation environment.
 
@@ -32,7 +32,7 @@ def create_simulation_env(initial_state: list, phase_type: str) -> BasiliskRWEnv
         sim_env (BasiliskRWEnv): The created simulation environment
     """
 
-    sim_env = BasiliskRWEnv(render_mode="rgb_array", initial_state=initial_state, phase_type=phase_type)
+    sim_env = BasiliskRWEnv(initial_state=initial_state)
 
     return sim_env
 
@@ -341,6 +341,6 @@ if __name__ == "__main__":
         Config.EnvSimulator.MAX_NR_KOZ
     ] 
     
-    env = create_simulation_env(INITIAL_STATE, Config.EnvSimulator.PHASE_TYPE)
+    env = create_simulation_env(INITIAL_STATE)
     simulation_data = start_simulation(env)
     plot_actual_attitude(simulation_data)

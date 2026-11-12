@@ -339,14 +339,13 @@ def stop_tensorboard(process) -> None:
             print(f"|-----{RED_START}Error stopping TensorBoard: {e}{COLOR_END}")
 
 
-def create_environment(model_name: str, initial_state=None, phase_name=None, phase_type=None) -> sat_env.BasiliskRWEnv:
+def create_environment(model_name: str, initial_state=None, phase_name=None) -> sat_env.BasiliskRWEnv:
     """
     Create the training environment
     Args:
         model_name (str): Name of the model for tensorboard logging
         initial_state (list): Optional initial state to reset the environment to
         phase_name (str): Optional phase name to include in monitor log filename
-        phase_type (str): Phase type.
     Returns:
         env (BasiliskRWEnv): The created and wrapped environment
     """
@@ -384,10 +383,10 @@ def create_environment(model_name: str, initial_state=None, phase_name=None, pha
 
     if initial_state is not None:
         # Need to use a lambda to pass initial_state parameter
-        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state, phase_type=phase_type, discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+        env = make_vec_env(lambda: sat_env.BasiliskRWEnv(initial_state=initial_state, discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
 
     else:
-        env = make_vec_env(sat_env.BasiliskRWEnv(phase_type=phase_type, discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
+        env = make_vec_env(sat_env.BasiliskRWEnv(discount_factor=Config.General.GAMMA), n_envs=8, vec_env_cls=DummyVecEnv, monitor_dir=monitor_log_file, monitor_kwargs=monitor_wrapper_kwargs)
 
     return env
 
