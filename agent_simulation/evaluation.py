@@ -516,6 +516,10 @@ def load_evaluation_data(file_name: str):
     settled_count = 0
     settled_final_err = []
 
+    violation_cnt = 0
+    above_40deg_cnt = 0
+    leq_10deg_cnt = 0
+
     for i, episode_data in enumerate(data):
     #     if np.mean(np.linalg.norm(episode_data["torques"], axis=1)) > 0.0004 and episode_data["cnt_Koz_violations"] > 0:
     #         #print(i,end=",")
@@ -555,7 +559,24 @@ def load_evaluation_data(file_name: str):
         
     #     # Violation
         if episode_data["cnt_Koz_violations"] > 0:
-            print(i,end=",")
+            #print(i,end=",")
+            violation_cnt += 1
+            pass
+
+        # If final attitude error > 40 deg
+        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 40.0:
+            #print(i,end=",")
+            above_40deg_cnt += 1
+            pass
+
+        # If final attitude error > 40 deg and NO violation
+        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 40.0 and episode_data["cnt_Koz_violations"] == 0:
+            #print(i,end=",")
+            pass
+
+        # If final attitude error <= 10 deg
+        if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi <= 10:
+            leq_10deg_cnt += 1
             pass
 
     #     if episode_data["cumulative_rewards"][-1] < -2800:
@@ -603,7 +624,11 @@ def load_evaluation_data(file_name: str):
     #         reward_min = episode_data["cumulative_rewards"][-1]
     #         reward_min_idx = i
     #         pass
-    # print()
+    print()
+    print("Violation count: ", violation_cnt)
+    print("Final attitude error above 40°: ", above_40deg_cnt)
+    print("Final attitude error <= 10°: ", leq_10deg_cnt)
+
     return data
 
 
@@ -633,7 +658,7 @@ if __name__ == "__main__":
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=1000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
+    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
     t_end = time.time()
 
     print()
