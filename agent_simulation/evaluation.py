@@ -8,7 +8,6 @@ import time
 import os
 import sys
 import random
-import imageio.v2 as imageio
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,40 +17,33 @@ if _drl_repo_dir not in sys.path:
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from agent_training import environment as sat_env
 from agent_training.constants import Constants
-from agent_training.environment import BasiliskRWEnv, scale_torque, rotate_vector_by_quaternion_to_body_frame, LSTM
+from agent_training.environment import BasiliskRWEnv, LSTM
 from APF_SMC.apf_smc_controller import APFSMCController, APFSMCParams
 from config.config import Config
-
-# Backward compatibility for models saved when trainer.py imported LSTM via
-# `from environment import LSTM`. Cloudpickle stores that module path.
-sys.modules.setdefault("environment", sat_env)
 
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.dirname(parent_dir)
 repo_parent_dir = os.path.dirname(repo_dir)
 eval_data_dir = os.path.join(repo_parent_dir, "evaluation_data")
-video_dir = os.path.join(repo_parent_dir, "videos")
-
-# Create video directory if it doesn't exist
-if not os.path.exists(video_dir):
-    os.makedirs(video_dir)
 
 # Create evaluation data directory if it doesn't exist
 if not os.path.exists(eval_data_dir):
     os.makedirs(eval_data_dir)
 
 
-def load_agent(model_name: str, timestep: int, seed_random: bool = False):
+def load_agent(model_name: str, timestep: int, seed_random: bool = False) -> SAC:
     """
-    Load the agent to visualize.
+    Load the agent.
+
     Args:
-        model_name: Name of the model file (without .zip extension).
-        timestep: Timestep for evaluation.
+        model_name (str): Name of the model file (without .zip extension).
+        timestep (int): Timestep for evaluation.
+        seed_random (bool): Whether to use random seed or not.
     Returns:
-        model: The loaded SAC model.
+        model (SAC): The loaded SAC model.
     """
+
     model_path = f"models/{model_name}/{model_name}_{timestep}.zip"
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -61,25 +53,26 @@ def load_agent(model_name: str, timestep: int, seed_random: bool = False):
         random.seed(time.time())
         np.random.seed(int(time.time()))
         seed_rng = random.randint(0, 1000000000)
-        #model.set_random_seed(seed_rng)
         model.action_space.seed(seed_rng)
         print(f"Model loaded with random seed: {seed_rng}")
 
     return model
 
 
-def create_evaluation_env(phase_type, initial_state, model_name, timestep, controller: str = "DRL"):
+def create_evaluation_env(phase_type: str, initial_state: list, model_name: str, timestep: int, controller: str = "DRL") -> VecNormalize|DummyVecEnv:
     """
     Create the evaluation environment.
+
     Args:
-        phase_type: String phase type, e.g. phase 1, 2, transition etc.
-        initial_state: Initial state configuration for environment.
-        model_name: Name of the DRL model. Unused for the APF controller.
-        timestep: Training timestep of the DRL model. Unused for the APF controller.
-        controller: Controller to use, either "DRL" (default) or "APF".
+        phase_type (str): String phase type, e.g. phase 1 or 2.
+        initial_state (list): Initial state configuration for environment.
+        model_name (str): Name of the DRL model. Unused for the APF controller.
+        timestep (int): Training timestep of the DRL model. Unused for the APF controller.
+        controller (str): Controller to use, either "DRL" (default) or "APF".
     Returns:
         eval_env: The created evaluation environment.
     """
+
     controller = controller.upper()
     if controller not in ("DRL", "APF"):
         raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
@@ -95,21 +88,23 @@ def create_evaluation_env(phase_type, initial_state, model_name, timestep, contr
     return eval_env
 
 
-def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False, controller: str = "DRL"):
+def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_name: str, create_video: bool = False, controller: str = "DRL") -> dict:
     """
     Simulate the DRL or APF controller in the evaluation environment for one episode.
     Both controllers use the environment's Basilisk reaction-wheel dynamics.
+
     Args:
-        model: The trained model. Can be None for the APF controller.
-        eval_env: The evaluation environment.
-        max_steps: Maximum number of steps to simulate.
-        model_name: The name of the model being simulated.
-        create_video: Whether to create a video of the simulation.
-        controller: Controller to use, either "DRL" (default) or "APF".
+        model (SAC): The trained model. Can be None for the APF controller.
+        eval_env (BasiliskRWEnv): The evaluation environment.
+        max_steps (int): Maximum number of steps to simulate.
+        model_name (str): The name of the model being simulated.
+        create_video (bool): Whether to create a video of the simulation.
+        controller (str): Controller to use, either "DRL" (default) or "APF".
     Returns:
-        simulation_data: A dictionary containing the simulation data for plotting.
+        simulation_data (dict): A dictionary containing the simulation data for plotting.
             The APF controller has no LSTM output (shape: steps x 1 x 0).
     """
+
     controller = controller.upper()
     if controller not in ("DRL", "APF"):
         raise ValueError(f"Unknown controller: {controller}. Use \"DRL\" or \"APF\".")
@@ -122,7 +117,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     states = []
     states_koz = []
     lstm_output = []
-    torques = []
+    actions = []
     rewards_arr = []
     frames = []
 
@@ -151,20 +146,20 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         apf_params = APFSMCParams(
             beta2=1.0 * 0.005 * 2,
             beta1=1.0 * 5 * 0.005 * 2,
-            alpha=2.0, # 2.0 default, 0.5 test, 2.0 rec
-            sigma=2e-4, # 0.15 + 0.2 default, 2e-4 test
-            k=5e-3, # 4.0 default, 5e-3 test, 0.5 rec
-            epsilon=5e-3 # 1e-4 default, 5e-3 test
+            alpha=2.0,
+            sigma=2e-4,
+            k=5e-3,
+            epsilon=5e-3
             )
 
         # Use the same spacecraft, target attitude and boresight as the DRL environment.
         I = np.array(eval_env.get_attr("satellite")[0].hub.IHubPntBc_B, dtype=np.float64).reshape(3, 3)
         qd = np.array([1.0, 0.0, 0.0, 0.0]) # Target attitude quaternion.
-        boresight = eval_env.get_attr("x_axis")[0]
-        forbidden = [(normal_vector, boresight, half_angle)
+        boresight = eval_env.get_attr("x_axis")[0] # Set boresight vector.
+        forbidden = [(normal_vector, boresight, half_angle) # Structure KOZs.
                      for normal_vector, half_angle in zip(normal_vector_koz_array, half_angle_koz_array)]
-        apf_controller = APFSMCController.from_cones(I, qd, forbidden=forbidden, params=apf_params)
-        apf_controller.reset(state["satellite"][:4])
+        apf_controller = APFSMCController.from_cones(I, qd, forbidden=forbidden, params=apf_params) # Set KOZs.
+        apf_controller.reset(state["satellite"][:4]) # Initc controller.
 
     # Simulation loop
     contains_inf_torque = False
@@ -182,7 +177,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
             if not np.all(np.isfinite(torque)):
                 contains_inf_torque = True
                 
-            action = np.clip(-torque / scale_torque, -1.0, 1.0)[None, :]
+            action = np.clip(-torque / Constants.TORQUE_WHEEL_MAX, -1.0, 1.0)[None, :]
 
             # Store an empty pseudo LSTM output for the APF controller to maintain consistent data structure.
             lstm_output.append(np.empty((1, 0)))
@@ -195,7 +190,7 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
         done = bool(dones[0])
         info = infos[0]
 
-        torques.append(action[0].copy())
+        actions.append(action[0].copy())
         rewards_arr.append(rewards[0])
 
         if done:
@@ -214,19 +209,11 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     if contains_inf_torque:
         print("WARNING: APF torque is not finite.")
 
-    # Save as MP4
-    timestamp = time.time()
-    output_path = os.path.join(video_dir, f"{model_name}_{timestamp}.mp4")
-
-    if create_video:
-        imageio.mimsave(output_path, frames, fps=30)
-        print(f"Saved video to {output_path}")
-
-    # Extract the solution for attitude (in terms of quaternion) and angular velocity
+    # Store data.
     states_array = np.array(states)
     states_koz_array = np.array(states_koz)
     lstm_output_array = np.array(lstm_output)
-    torques_array = np.array(torques) * scale_torque
+    torques_array = np.array(actions) * Constants.TORQUE_WHEEL_MAX
     rewards_array = np.array(rewards_arr)
     rewards_discounted_array = np.zeros_like(rewards_array)
 
@@ -267,22 +254,24 @@ def simulate_episode(model: SAC, eval_env: BasiliskRWEnv, max_steps: int, model_
     return simulation_data
 
 
-def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int, controller: str = "DRL"):
+def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, worker_id: int, controller: str = "DRL") -> dict:
     """
     Worker function to evaluate the DRL or APF controller for a subset of episodes.
     This function will be run in parallel by multiple processes.
+
     Args:
-        model_name: Name of the model file (without .zip extension) or APF evaluation label.
-        timestep: Training timestep of the DRL model. Unused for the APF controller.
-        phase_type: String phase type e.g. phase 1, 2, transition etc.
-        initial_state: Initial state configuration for environment.
-        max_steps: Maximum steps per episode.
-        episodes: Number of episodes to run.
-        worker_id: ID of this worker process.
-        controller: Controller to use, either "DRL" (default) or "APF".
+        model_name (str): Name of the model file (without .zip extension) or APF evaluation label.
+        timestep (int): Training timestep of the DRL model. Unused for the APF controller.
+        phase_type (str): String phase type e.g. phase 1, 2, transition etc.
+        initial_state (list): Initial state configuration for environment.
+        max_steps (int): Maximum steps per episode.
+        episodes (int): Number of episodes to run.
+        worker_id (int): ID of this worker process.
+        controller (str): Controller to use, either "DRL" (default) or "APF".
     Returns:
-        Dictionary containing evaluation results.
+        result (dict): Dictionary containing evaluation results.
     """
+
     controller = controller.upper()
 
     # Load model in worker process for the DRL controller.
@@ -339,18 +328,19 @@ def evaluate_agent_worker(model_name: str, timestep: int, phase_type: str, initi
     }
 
 
-def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4, controller: str = "DRL", apf_params: APFSMCParams = None):
+def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_state: list, max_steps: int, episodes: int, num_workers: int = 4, controller: str = "DRL") -> None:
     """
     Simulate the DRL or APF controller in parallel using multiple processes and save the data at the end.
+
     Args:
-        model_name: Name of the model file (without .zip extension) or APF evaluation label.
-        timestep: Training timestep of the DRL model. Unused for the APF controller.
-        phase_type: String phase type e.g. phase 1, 2, transition etc.
-        initial_state: Initial state configuration for environment.
-        max_steps: Maximum steps per episode.
-        episodes: Total number of episodes to run.
-        num_workers: Number of parallel worker processes (default: 4).
-        controller: Controller to use, either "DRL" (default) or "APF".
+        model_name (str): Name of the model file (without .zip extension) or APF evaluation label.
+        timestep (int): Training timestep of the DRL model. Unused for the APF controller.
+        phase_type (str): String phase type e.g. phase 1, 2, transition etc.
+        initial_state (list): Initial state configuration for environment.
+        max_steps (int): Maximum steps per episode.
+        episodes (int): Total number of episodes to run.
+        num_workers (int): Number of parallel worker processes (default: 4).
+        controller (str): Controller to use, either "DRL" (default) or "APF".
     """
     import multiprocessing as mp
 
@@ -386,27 +376,10 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
         worker_results = [r.get() for r in results]
     
     # Combine results from all workers
-    koz_violation_episodes = sum(r["koz_violation_episodes"] for r in worker_results)
-    ep_rewards = []
-    err_angles_final = []
-    ang_vels_final = []
-    min_margins_koz = []
-    cnts_koz_violations = []
     simulation_data = []
     
     for r in worker_results:
-        ep_rewards.extend(r["ep_rewards"])
-        err_angles_final.extend(r["err_angles_final"])
-        ang_vels_final.extend(r["ang_vels_final"])
-        min_margins_koz.extend(r["min_margins_koz"])
-        cnts_koz_violations.extend(r["cnts_koz_violations"])
         simulation_data.extend(r["simulation_data"])
-
-    # Convert to numpy arrays
-    err_angles_final_array = np.array(err_angles_final)
-    ang_vels_final_array = np.array(ang_vels_final)
-    min_margins_koz_array = np.array(min_margins_koz)
-    cnts_koz_violations_array = np.array(cnts_koz_violations)
 
     # Save episode data
     time_iso = time.strftime("%Y-%m-%d-%H-%M-%S")
@@ -417,26 +390,14 @@ def evaluate_agent(model_name: str, timestep: int, phase_type: str, initial_stat
     np.savez(save_path, data=np.array(simulation_data), dtype=object)
 
     calc_metrics(simulation_data)
-    # Print results
-    # print()
-    # print(f"Violation rate: {koz_violation_episodes/episodes*100}%")
-    # print(f"Agent was within KOZ for these amount of steps per episode:")
-    # print(f"--- Mean: {np.mean(cnts_koz_violations_array):.2f}, Std: {np.std(cnts_koz_violations_array):.2f}, Min: {np.min(cnts_koz_violations_array)}, Max: {np.max(cnts_koz_violations_array)}")
-    # print(f"Minimum margin to KOZ (degrees):")
-    # print(f"--- Mean: {np.mean(min_margins_koz_array):.2f}, Std: {np.std(min_margins_koz_array):.2f}, Min: {np.min(min_margins_koz_array):.2f}, Max: {np.max(min_margins_koz_array):.2f}")
-    # print(f"Final rotation angle (degrees):")
-    # print(f"--- Mean: {np.mean(err_angles_final_array):.2f}, Std: {np.std(err_angles_final_array):.2f}, Min: {np.min(err_angles_final_array):.2f}, Max: {np.max(err_angles_final_array):.2f}")
-    # print(f"Final angular velocity (deg/s):")
-    # print(f"--- Mean: {np.mean(ang_vels_final_array):.4f}, Std: {np.std(ang_vels_final_array):.4f}, Min: {np.min(ang_vels_final_array):.4f}, Max: {np.max(ang_vels_final_array):.4f}")
-    # print(f"Rewards:")
-    # print(f"--- Mean: {np.mean(ep_rewards):.2f}, Std: {np.std(ep_rewards):.2f}, Min: {np.min(ep_rewards):.2f}, Max: {np.max(ep_rewards):.2f}")
 
 
-def calc_metrics(data: list):
+def calc_metrics(data: list) -> None:
     """
     Calculate some metrics across the episodes.
-    Inputs:
-        data: List of episode data dictionaries.
+
+    Args:
+        data (list): List of episode data dictionaries.
     """
   
     episode_rewards = []
@@ -448,11 +409,11 @@ def calc_metrics(data: list):
     settling_time = []
     control_effort = []
     
-
+    # Loop through each episode and calculate metrics.
     for i, episode_data in enumerate(data):
         episode_rewards.append(episode_data["cumulative_rewards"][-1])
 
-        # settling definition: settled if attitude error stays below target accuracy (0.25 deg) after some time (settling time).
+        # Settling definition: settled if attitude error stays below target accuracy (1 deg) after some time (settling time).
         tmp_settling_time = 0
         tmp_settled = False
 
@@ -476,7 +437,8 @@ def calc_metrics(data: list):
             koz_margin_violated.append(episode_data["min_margin_koz"])
         else:
             koz_margin_not_violated.append(episode_data["min_margin_koz"])
-       
+
+    # Print metrics.
     print()
     print("Episodes: ", len(data))
     print()
@@ -495,7 +457,7 @@ def calc_metrics(data: list):
     print("--------------------------------------------------")
 
 
-def load_evaluation_data(file_name: str):
+def load_evaluation_data(file_name: str) -> list[dict]:
     """
     Load the simulation data.
     The part inside of the for loop can be modified to find specific episodes you are interested in.
@@ -503,10 +465,11 @@ def load_evaluation_data(file_name: str):
     You could then print the index (i) of these episodes to the terminal.
 
     Args:
-        file_name: Name of the .npz file containing the evaluation data. Must be located in the evaluation_data directory.
+        file_name (str): Name of the .npz file containing the evaluation data. Must be located in the evaluation_data directory.
     Returns:
-        data: The loaded simulation data.
+        data (list[dict]): The loaded simulation data.
     """
+
     file_path = os.path.join(eval_data_dir, file_name)
     _data = np.load(file_path, allow_pickle=True)
     data = _data["data"].tolist()  # Convert back to list of dicts
@@ -521,43 +484,7 @@ def load_evaluation_data(file_name: str):
     leq_10deg_cnt = 0
 
     for i, episode_data in enumerate(data):
-    #     if np.mean(np.linalg.norm(episode_data["torques"], axis=1)) > 0.0004 and episode_data["cnt_Koz_violations"] > 0:
-    #         #print(i,end=",")
-    #         pass
-
-    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 1.0 and episode_data["cnt_Koz_violations"] > 0:
-    #         #print(i,end=",")
-    #         pass
-        
-    #     # Off-border: no violation, target reached, large KOZ
-    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"] > 10.0 
-    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
-    #         #print(i,end=",")
-    #         pass
-
-    #     # Along-border: no violation, target reached, large KOZ
-    #     if (2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.5 and episode_data["min_margin_koz"] < 0.5 
-    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 100.0 and episode_data["cnt_Koz_violations"] == 0 and episode_data["half_angle_koz_array"]*180/np.pi > 25.0):
-    #         #print(i,end=",")
-    #         pass
-        
-    #     # Stuck: Low episode reward, low control effort, far away from target
-    #     if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) < 0.0005
-    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi > 30.0):
-    #         #print(i,end=",")
-    #         pass
-
-    #     # Oscillation: Low episode reward, high control effort, close to target
-    #     if (episode_data["cumulative_rewards"][-1] < -100 and np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) > 0.0008
-    #         and 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 10.0):
-    #         #print(i,end=",")
-    #         pass
-
-    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 0.25:
-    #         #print(i,end=",")
-    #         pass
-        
-    #     # Violation
+        # Violation
         if episode_data["cnt_Koz_violations"] > 0:
             #print(i,end=",")
             violation_cnt += 1
@@ -579,51 +506,6 @@ def load_evaluation_data(file_name: str):
             leq_10deg_cnt += 1
             pass
 
-    #     if episode_data["cumulative_rewards"][-1] < -2800:
-    #         pass
-
-    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][0,0])) * 180/np.pi < 120 and episode_data["cumulative_rewards"][-1] > 120:
-    #         #print(i,end=",")
-    #         pass
-
-    #     if np.linalg.norm(episode_data["omega"][-1]) * 180 / np.pi > 2.0:
-    #         #print(i,end=",")
-    #         pass
-
-    #     if np.mean(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 2.0:
-    #         #print(i,end=",")
-    #         pass
-
-    #     if np.max(np.linalg.norm(episode_data["omega"], axis=1)) * 180 / np.pi > 11.0:
-    #         #print(i,end=",")
-    #         pass
-
-    #     if i == 238:
-    #         pass
-        
-    #     # if the last attitude error is above 5 degree and the last 50 omega norms are below 0.1 deg/s each
-    #     omega_settled = True
-    #     for omega in episode_data["omega"][-200:]:
-    #         if np.linalg.norm(omega)*180/np.pi > 2.0:
-    #             omega_settled = False
-    #     if 2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi < 5.0 and omega_settled:
-    #         #print(i,end=",")
-    #         settled_count += 1
-    #         settled_final_err.append(2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi)
-    #         pass
-
-    #     if not omega_settled:
-    #         #print(i,end=",")
-    #         pass
-        
-    #     if reward_min is None:
-    #         reward_min = episode_data["cumulative_rewards"][-1]
-    #         reward_min_idx = i
-    #     if episode_data["cumulative_rewards"][-1] < reward_min:
-    #         #print(i,end=",")
-    #         reward_min = episode_data["cumulative_rewards"][-1]
-    #         reward_min_idx = i
-    #         pass
     print()
     print("Violation count: ", violation_cnt)
     print("Final attitude error above 40°: ", above_40deg_cnt)
@@ -635,7 +517,7 @@ def load_evaluation_data(file_name: str):
 ### MAIN ###
 if __name__ == "__main__":
 
-    # Set initial state for evaluation environment
+    # Set initial state for evaluation environment.
     INITIAL_STATE = [
         Config.Evaluation.MIN_INITIAL_ERROR_ANGLE,
         Config.Evaluation.MAX_INITIAL_ERROR_ANGLE,
@@ -650,15 +532,14 @@ if __name__ == "__main__":
 
     PHASE_TYPE = Config.Evaluation.PHASE_TYPE
 
-    """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes.
-    """
-    #loaded = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedfullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-20-15-06.npz")
+    """ Uncomment the lines below to load saved evaluation data and calculate some metrics for multiple episodes. """
+    #loaded = load_evaluation_data("")
     #calc_metrics(loaded)
    
     """ Uncomment evaluate_agent() below to simulate the agent over multiple episodes and save the data at the end. """
     t_start = time.time()
     # Run evaluation with possibly parallel workers and a defined number of episodes
-    evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
+    #evaluate_agent(Config.Evaluation.MODEL_NAME, Config.Evaluation.TIMESTEP, PHASE_TYPE, INITIAL_STATE, Config.Evaluation.MAX_STEPS, episodes=10000, num_workers=8, controller=Config.Evaluation.CONTROLLER)
     t_end = time.time()
 
     print()
