@@ -477,6 +477,7 @@ def create_or_load_model(env, continue_training, model_name, log_path):
 
         # Create LSTM extractor
         policy_kwargs = dict(
+            net_arch=dict(pi=[256, 256], qf=[256, 256]),
             features_extractor_class=LSTM,
             features_extractor_kwargs=dict(
                 sat_obs_dim=10,
@@ -546,7 +547,7 @@ def save_model(model, model_name, save_latest=True):
     # Save replay buffer
     _replay_path = os.path.join(replay_buffer_path, model_name)
     backup_path_replay = os.path.join(_replay_path, f"{model_name}_{model.num_timesteps}")
-    model.save_replay_buffer(backup_path_replay)
+    model.save_replay_buffer(backup_path_replay) # Comment this line to only save replay buffer on phase completion.
 
     # Save normalization data for the VecNormalize wrapper
     if isinstance(model.get_env(), VecNormalize):
