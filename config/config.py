@@ -25,6 +25,9 @@ class Config():
         LEARNING_STARTS = config_data["general"]["LEARNING_STARTS"]
         BATCH_SIZE = config_data["general"]["BATCH_SIZE"]
         GRADIENT_STEPS = config_data["general"]["GRADIENT_STEPS"]
+        NET_ARCH_ACTOR = config_data["general"]["NET_ARCH_ACTOR"]
+        NET_ARCH_CRITIC = config_data["general"]["NET_ARCH_CRITIC"]
+        LSTM_OUT_DIM = config_data["general"]["LSTM_OUT_DIM"]
 
     class Training():
         SCHEDULE_FILE_NAME = config_data["training"]["SCHEDULE_FILE_NAME"]

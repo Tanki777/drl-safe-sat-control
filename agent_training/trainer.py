@@ -489,11 +489,11 @@ def create_or_load_model(env: sat_env.BasiliskRWEnv, continue_training: bool, mo
 
         # Create LSTM extractor
         policy_kwargs = dict(
-            net_arch=dict(pi=[256, 256], qf=[256, 256]),
+            net_arch=dict(pi=Config.General.NET_ARCH_ACTOR, qf=Config.General.NET_ARCH_CRITIC),
             features_extractor_class=LSTM,
             features_extractor_kwargs=dict(
                 sat_obs_dim=10,
-                lstm_out_dim=4
+                lstm_out_dim=Config.General.LSTM_OUT_DIM
             )
         )
 
