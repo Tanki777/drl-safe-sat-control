@@ -896,7 +896,7 @@ def plot_pointing_accuracy_histogram(loaded_episodes_list: list, evaluation_labe
 
     # Create histogram bin dimension and weight.
     bin_width_fine = 0.2
-    bin_width_coarse = 1.0 # 1.0 / 4.0
+    bin_width_coarse = 4.0 # 1.0 / 4.0
     max_angle = max((max(angles) for angles in final_error_angles_list if angles), default=0)
     num_bins_fine = int(np.floor(max_angle / bin_width_fine)) + 1
     num_bins_coarse = int(np.floor(max_angle / bin_width_coarse)) + 1
@@ -917,7 +917,7 @@ def plot_pointing_accuracy_histogram(loaded_episodes_list: list, evaluation_labe
     ax1_1.set_title("Total Range")
     ax1_1.set_ylabel("Episodes [%]")
     ax1_1.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}%"))
-    ax1_1.xaxis.set_major_locator(MultipleLocator(2)) # 2 / 10
+    ax1_1.xaxis.set_major_locator(MultipleLocator(10)) # 2 / 10
     ax1_1.grid(axis='y', alpha=0.75)
     ax1_1.legend(loc="upper right")
 
@@ -986,13 +986,32 @@ if __name__ == "__main__":
     #loaded_3 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-05-14-56-28.npz")
     #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_schedfullv1c3_52000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_kozMinMargin0_2026-10-05-15-55-56.npz")
     
+    # good example: ep26 (narrow,loaded_4), ep9 (detour,loaded_4)
+    # violation example: ep139 (settles,loaded_4), ep250 (stuck,loaded_4)
+    # stall example: ep401 (loaded_4)
+    # above 40 deg eps: loaded_3: [365,729,968,2084,2482,4258,4991,5111,5490,5694,6167,7603,8649,8872] cnt=14 | loaded_4: [41,90,105,250,265,290,313,371,378,401,449,515,549,687,787,797,873,877,954,967,1071,1128] cnt=214
+    # violation eps: loaded_3 [365,482,564,729,829,904,968,1079,1327,1527,1561,1575,1810,2084,2181,2482,2970,3092,3555] | loaded_4 [35,60,90,96,105,108,132,136,139,161,209,245,250,281,290,305,357,371,378,390,398,426,446,461,485,528,532,577,601,604,624,639,710,728,731,732,735,789,794,812,819,829]
+    # above 40 deg and NO violation: loaded_3: [none] | loaded_4: [41,265,313,401,449,515,549,687,787,797,873]
+    #loaded_0 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 0, 0]_ep[10000]_2026-10-26-12-59-46.npz")
+    #loaded_1 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 1, 1]_ep[10000]_2026-10-26-13-40-33.npz")
+    #loaded_2 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 2, 2]_ep[10000]_2026-10-26-14-09-47.npz")
+    #loaded_3 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-26-14-36-40.npz")
+    #loaded_4 = load_evaluation_data("apf_kozMinMargin0_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-26-15-07-27.npz")
+
     #loaded_4 = load_evaluation_data("rewMod224ph2c2b_fast_lstm8_kozMinMargin0_schedFullv1c3_53300000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[10000]_2026-10-08-23-31-55.npz")
     
     #loaded_4 = load_evaluation_data("rewMod224ph2c2e_fast_lstm8_kozMinMargin0_schedFullv1c3_50000000_[90.0, 110.0, 0.0, 0.01, 3000, 25.0, 30.0, 3, 3]_ep[100]_2026-10-12-18-40-24.npz")
 
+    # APF vs DRL 3 KOZs always touching
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2_fast_kozMinMargin0_schedFullv1c3_48400000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_kozMargin0_2026-11-05-17-21-17.npz")
+    #loaded_4 = load_evaluation_data("apf_APF_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_kozMargin0_2026-11-05-17-06-37.npz")
+
+    # Omega_margin = 0
+    #loaded_4 = load_evaluation_data("rewMod224ph2c2rev7_fast_lstm8_kozMinMargin0_schedFullv1c3_54000000_[90.0, 180.0, 0.0, 0.01, 3000, 15.0, 30.0, 3, 3]_ep[1000]_2026-11-06-11-49-53.npz")
+
     #plot_actual_attitude(loaded_4[11])
-    #plot_for_report(loaded_4[5],time_end=300)
+    #plot_for_report(loaded_4[401],time_end=100)
     #multiple_loaded = [loaded_0, loaded_1, loaded_2, loaded_3, loaded_4]
     #evaluation_labels = ["0 KOZs", "1 KOZ"]
-    evaluation_labels = ["0 KOZs", "1 KOZ", "2 KOZs", "3 KOZs", "3 KOZs ($\\Omega_{\\mathrm{margin}} = [0, \\theta]$°)"]
-    #plot_pointing_accuracy_histogram([loaded_4], [evaluation_labels[4]])
+    #evaluation_labels = ["0 KOZs", "1 KOZ", "2 KOZs", "3 KOZs", "3 KOZs ($\\Omega_{\\mathrm{margin}} = [0, \\theta]$°)"]
+    #plot_pointing_accuracy_histogram(multiple_loaded, evaluation_labels)
