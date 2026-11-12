@@ -1,5 +1,5 @@
 """
-Barebone training script. Includes environment creation, model loading/creation, training loop with custom callback for logging and saving, and TensorBoard server management.
+Base utility for auto_trainer. Includes environment creation, model loading/creation, training loop with custom callback for logging and saving, and TensorBoard server management.
 
 Author: Cemal Yilmaz - 2026
 """
@@ -16,7 +16,7 @@ if _drl_repo_dir not in sys.path:
     sys.path.insert(0, _drl_repo_dir)
 
 from stable_baselines3 import SAC
-from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import HParam
@@ -25,11 +25,6 @@ from stable_baselines3.common.utils import get_schedule_fn
 from agent_training import environment as sat_env
 from agent_training.environment import LSTM
 from config.config import Config
-
-# Backward compatibility for checkpoints saved when this script imported LSTM
-# via `from environment import LSTM`.
-sys.modules.setdefault("environment", sat_env)
-
 
 # Terminal colors
 RED_START = "\033[91m"
@@ -81,15 +76,15 @@ class CustomCallback(BaseCallback):
         # Track how many episodes to collect for logging
         self.n_env_collected = 0
 
-    def _log_network_lstm(self, lstm: LSTM, network_name: str):
+    def _log_network_lstm(self, lstm: LSTM, network_name: str) -> None:
         """
         Logs each weight and bias of the given LSTM.
         Important: the sizes used are only valid for an LSTM which is not bidirectional and where proj_size = 0.
         For more details, see PyTorch's LSTM class.
 
         Args:
-            lstm: The LSTM features extractor.
-            network_name: The name of the network the LSTM belongs to.
+            lstm (LSTM): The LSTM features extractor.
+            network_name (str): The name of the network the LSTM belongs to.
         """
 
         input_size = lstm.lstm.input_size
@@ -143,7 +138,7 @@ class CustomCallback(BaseCallback):
                     self.logger.record(f"{base_name}_cell_h{h}", cell_values[h])
                     self.logger.record(f"{base_name}_output_h{h}", output_values[h])
 
-    def _log_lstm_parameters(self):
+    def _log_lstm_parameters(self) -> None:
         """
         Log LSTM weights and biases in Tensorboard.
         """
@@ -159,9 +154,11 @@ class CustomCallback(BaseCallback):
         self._log_network_lstm(features_extractor_actor, "actor")
         self._log_network_lstm(features_extractor_critic, "critic")
 
-           
+    def _on_training_start(self) -> None:
+        """
+        Called once before the training starts. Logs hyperparameters to TensorBoard and initializes states for discounted episode rewards.
+        """
 
-    def _on_training_start(self):
         num_envs = self.training_env.num_envs
 
         # Initialize states for discounted episode rewards.
@@ -182,10 +179,13 @@ class CustomCallback(BaseCallback):
             "train/value_loss": 0.0
         }
         
-        
         self.logger.record("hparams", HParam(hparam_dict, metric_dict), exclude=("stdout", "log", "json", "csv"))
 
     def _on_step(self) -> bool:
+        """
+        Called at every step of the training. Collects custom metrics from the environment info dict at the end of each rollout, logs them to TensorBoard, and saves the model at regular intervals.
+        """
+
         infos = self.locals.get("infos", [])
         rewards = self.locals.get("rewards", [])
         dones = self.locals.get("dones", [])
@@ -235,9 +235,11 @@ class CustomCallback(BaseCallback):
             
         return True
     
-    
-    def _log_custom_metrics(self):
-        """Log accumulated custom metrics to TensorBoard"""
+    def _log_custom_metrics(self) -> None:
+        """
+        Log accumulated custom metrics to TensorBoard.
+        """
+
         for metric_name, values in self.custom_metrics.items():
             if values:  # Only log if we have data
                 if metric_name == "settling_time":
@@ -268,10 +270,14 @@ class CustomCallback(BaseCallback):
                 self.custom_metrics[metric_name] = []
 
         
+def start_tensorboard() -> subprocess.Popen:
+    """
+    Start TensorBoard server in background, access with http://localhost:6006
 
+    Returns:
+        process (Popen): The subprocess.Popen object for the TensorBoard server.
+    """
 
-def start_tensorboard():
-    """Start TensorBoard server in background, access with http://localhost:6006"""
     print("|")
     print(f"|---{YELLOW_START}Looking for TensorBoard logs in: {log_path}{COLOR_END}")
 
@@ -310,8 +316,14 @@ def start_tensorboard():
         print(f"|-----{RED_START}TensorBoard not found.{COLOR_END}")
 
 
-def stop_tensorboard(process):
-    """Stop TensorBoard server"""
+def stop_tensorboard(process) -> None:
+    """
+    Stop TensorBoard server.
+
+    Args:
+        process (Popen): The subprocess.Popen object for the TensorBoard server.
+    """
+
     if process is not None:
         try:
             print(f"|---{YELLOW_START}Stopping TensorBoard server...{COLOR_END}")
@@ -327,17 +339,18 @@ def stop_tensorboard(process):
             print(f"|-----{RED_START}Error stopping TensorBoard: {e}{COLOR_END}")
 
 
-def create_environment(model_name, initial_state=None, phase_name=None, phase_type=None):
+def create_environment(model_name: str, initial_state=None, phase_name=None, phase_type=None) -> sat_env.BasiliskRWEnv:
     """
     Create the training environment
     Args:
-        model_name: Name of the model for tensorboard logging
-        initial_state: Optional initial state to reset the environment to
-        phase_name: Optional phase name to include in monitor log filename
-        phase_type: Phase type e.g. 1, 2, transition etc.
+        model_name (str): Name of the model for tensorboard logging
+        initial_state (list): Optional initial state to reset the environment to
+        phase_name (str): Optional phase name to include in monitor log filename
+        phase_type (str): Phase type.
     Returns:
-        env: The created and wrapped environment
+        env (BasiliskRWEnv): The created and wrapped environment
     """
+
     print("--------------------------------------------")
     print(f"|---{YELLOW_START}Creating environment...{COLOR_END}")
     
@@ -379,20 +392,20 @@ def create_environment(model_name, initial_state=None, phase_name=None, phase_ty
     return env
 
 
-def create_or_load_model(env, continue_training, model_name, log_path):
+def create_or_load_model(env: sat_env.BasiliskRWEnv, continue_training: bool, model_name: str, log_path: str) -> tuple[SAC, str, str]:
     """
     Create a new SAC model or load an existing one depending on continue_training.
+
     Args:
-        env: The training environment
-        continue_training: Boolean indicating whether to continue training from an existing model
-        model_name: Name of the model file
-        log_path: Path for tensorboard logs
+        env (BasiliskRWEnv): The training environment
+        continue_training (bool): Boolean indicating whether to continue training from an existing model
+        model_name (str): Name of the model file
+        log_path (str): Path for tensorboard logs
     Returns:
-        res: A tuple containing:
-        model: The created or loaded SAC model
-        save_path: Path where the model will be saved
-        latest_model_path: Path to the latest saved model
+        model, save_path, latest_model_path (tuple[SAC, str, str]): The created or loaded model, 
+            the path to save the model, and the path to the latest model.
     """
+
     # Ensure the directories exist
     if not os.path.exists(models_path):
         os.makedirs(models_path)
@@ -440,7 +453,7 @@ def create_or_load_model(env, continue_training, model_name, log_path):
             # Update tensorboard log directory to continue logging
             model.tensorboard_log = log_path
 
-            # Overwrite learning rate
+            """ Uncomment to manually overwrite learning rate for a saved model. """
             # lr = 2e-5
             # model.lr_schedule = get_schedule_fn(lr)
 
@@ -493,18 +506,20 @@ def create_or_load_model(env, continue_training, model_name, log_path):
     return model, save_path, latest_model_path
 
 
-def train_agent(model, total_timesteps, check_freq, save_interval, model_name):
+def train_agent(model: SAC, total_timesteps: int, check_freq: int, save_interval: int, model_name: str) -> SAC:
     """
     Train the agent model with custom callback for logging and saving.
+
     Args:
-        model: The SAC model to train
-        total_timesteps: Number of timesteps to train
-        check_freq: Frequency of callback checks
-        save_interval: Interval of timesteps to save the model
-        model_name: Name of the model for tensorboard logging
+        model (SAC): The SAC model to train
+        total_timesteps (int): Number of timesteps to train
+        check_freq (int): Frequency of callback checks
+        save_interval (int): Interval of timesteps to save the model
+        model_name (str): Name of the model for tensorboard logging
     Returns:
-        model: The trained SAC model
+        model (SAC): The trained SAC model
     """
+
     custom_callback = CustomCallback(check_freq=check_freq, save_interval=save_interval, model_name=model_name, n_envs=model.n_envs)
 
     print("|")
@@ -527,14 +542,16 @@ def train_agent(model, total_timesteps, check_freq, save_interval, model_name):
     return model
 
 
-def save_model(model, model_name, save_latest=True):
+def save_model(model: SAC, model_name: str, save_latest=True) -> None:
     """
     Save the trained model.
+
     Args:
-        model: The trained SAC model
-        model_name: Name of the model
-        save_latest: Whether to also save the model as the latest version for future loading
+        model (SAC): The trained SAC model
+        model_name (str): Name of the model
+        save_latest (bool): Whether to also save the model as the latest version for future loading
     """
+
     # Save the updated model
     print("|")
     print(f"|---{YELLOW_START}Saving improved model...{COLOR_END}")
@@ -547,7 +564,9 @@ def save_model(model, model_name, save_latest=True):
     # Save replay buffer
     _replay_path = os.path.join(replay_buffer_path, model_name)
     backup_path_replay = os.path.join(_replay_path, f"{model_name}_{model.num_timesteps}")
-    model.save_replay_buffer(backup_path_replay) # Comment this line to only save replay buffer on phase completion.
+
+    """ Comment this line to only save replay buffer on phase completion (saves a LOT of disk space). """
+    model.save_replay_buffer(backup_path_replay)
 
     # Save normalization data for the VecNormalize wrapper
     if isinstance(model.get_env(), VecNormalize):
