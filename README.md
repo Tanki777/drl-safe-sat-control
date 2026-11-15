@@ -189,7 +189,7 @@ Create a new .json file in the ``schedules`` folder and name it freely. Then, cr
 - ``max_steps``: The maximum timesteps of one episode. By default, the episode is always as long as configured here.
 
     >[!NOTE]
-    By default, early termination is not used. But it can be activated to incorporate reward functions which use early termination.
+    > By default, early termination is not used. But it can be activated to incorporate reward functions which use early termination.
 
 - ``min_half_angle_koz / max_half_angle_koz``: The minimum / maximum half angle of the KOZ in **degree**.
 - ``min_nr_koz / max_nr_koz``: The minimum / maximum number of KOZs.
@@ -215,7 +215,7 @@ python agent_training/auto_trainer.py
         6. Copy the model meta file of the old model from ``models_meta`` into the same ``models_meta`` folder and rename the file accordingly. Also, edit the new meta file and update ``model_name``. Edit the remaining timestep values for the phases according to how you want to continue training.
 
             > [!CAUTION]
-            If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom. The phases listed in the meta file must then match the phases of the new schedule file.
+            > If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom. The phases listed in the meta file must then match the phases of the new schedule file.
         
         7. Make sure that ``training/MODEL_NAME`` and ``training/SCHEDULE_FILE_NAME`` in ``config/config.json`` are set to the new model / schedule name.
         8. Run the command above.
@@ -233,7 +233,7 @@ There are two methods available to monitor training progress. The first uses SB3
 - ``min_margin_koz``: The closest / deepest the boresight vector got to / into a KOZ within the episode.
 
     > [!NOTE]
-    If there is no active KOZ, ``min_margin_koz`` shows up as 180° as this value is being used for non-active KOZ states.
+    > If there is no active KOZ, ``min_margin_koz`` shows up as 180° as this value is being used for non-active KOZ states.
         
 - ``entered_koz_count``: The amount of timesteps a KOZ is violated within the episode.
 
