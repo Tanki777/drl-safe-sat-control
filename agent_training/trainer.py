@@ -251,11 +251,11 @@ class CustomCallback(BaseCallback):
                         mean_value = None
                 elif metric_name == "min_margin_koz":
                     # For min_margin_koz, take the minimum value
-                    mean_value = min(values)
+                    min_value = min(values)
+                    self.logger.record(f"custom/{metric_name}_min", min_value)
                 else:
                     mean_value = sum(values) / len(values)
-                # Log to TensorBoard using the logger
-                self.logger.record(f"custom/{metric_name}_mean", mean_value)
+                    self.logger.record(f"custom/{metric_name}_mean", mean_value)
             
                 # Log max values
                 if metric_name in ["final_error_angle", "settling_time", "initial_error_angle"]:
