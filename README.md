@@ -216,7 +216,7 @@ python agent_training/auto_trainer.py
         8. Run the command above.
 
 > [!CAUTION]
-If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom at step 6. The phases listed in the meta file must then match the phases of the new schedule file.
+If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom at **step f**. The phases listed in the meta file must then match the phases of the new schedule file.
 
 ### 2.1.4. Monitor Training
 There are two methods available to monitor training progress. The first uses SB3's built in monitor wrapper, which creates a folder for the model in ``monitor_logs``. The model folder then creates a csv file for as many environments are used (by default 8). Each csv file contains these metrics:
