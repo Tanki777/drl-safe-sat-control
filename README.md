@@ -187,13 +187,12 @@ Create a new .json file in the ``schedules`` folder and name it freely. Then, cr
 - ``min_initial_error_angle / max_initial_error_angle``: The minimum / maximum initial attitude error angle in **degree**.
 - ``min_initial_angular_velocity / max_initial_angular_velocity``: The minimum / maximum initial angular velocity (satellite) in **deg / s**.
 - ``max_steps``: The maximum timesteps of one episode. By default, the episode is always as long as configured here.
-
-    >[!NOTE]
-    > By default, early termination is not used. But it can be activated to incorporate reward functions which use early termination.
-
 - ``min_half_angle_koz / max_half_angle_koz``: The minimum / maximum half angle of the KOZ in **degree**.
 - ``min_nr_koz / max_nr_koz``: The minimum / maximum number of KOZs.
 - ``margin_koz``: The **minimum** margin angle between the center zone and its left / right neighboring zone in **degree**. For example, 10° results in a random margin between 10° and 10°+$\theta$, where $\theta$ is the sampled KOZ half angle. Setting this value to 0° makes it possible for zones to touch each other (their borders), and a negative value enables overlapping zones.
+
+>[!NOTE]
+By default, early termination is not used. But it can be activated to incorporate reward functions which use early termination.
 
 ### 2.1.3. Start Training
 After everything is configured, training can be started or continued by running:
@@ -213,12 +212,11 @@ python agent_training/auto_trainer.py
         4. Copy the checkpoint model replay buffer file from ``models_replay_buffers`` (e.g. ``models_replay_buffers/<my_old_model_name>/<my_old_model_name>_300000.pkl``) and paste it to the new folder in ``models_replay_buffers``.
         5. Rename that file, similar to the other files before: Adjust the model name of the file and replace the timestep number with ``latest``.
         6. Copy the model meta file of the old model from ``models_meta`` into the same ``models_meta`` folder and rename the file accordingly. Also, edit the new meta file and update ``model_name``. Edit the remaining timestep values for the phases according to how you want to continue training.
-
-            > [!CAUTION]
-            > If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom. The phases listed in the meta file must then match the phases of the new schedule file.
-        
         7. Make sure that ``training/MODEL_NAME`` and ``training/SCHEDULE_FILE_NAME`` in ``config/config.json`` are set to the new model / schedule name.
         8. Run the command above.
+
+> [!CAUTION]
+If you want to continue training with a **different** schedule, also update ``schedule_name`` and the phases listed at the bottom at step 6. The phases listed in the meta file must then match the phases of the new schedule file.
 
 ### 2.1.4. Monitor Training
 There are two methods available to monitor training progress. The first uses SB3's built in monitor wrapper, which creates a folder for the model in ``monitor_logs``. The model folder then creates a csv file for as many environments are used (by default 8). Each csv file contains these metrics:
@@ -231,11 +229,10 @@ There are two methods available to monitor training progress. The first uses SB3
 - ``final_error_angle``: The attitude error angle at the end of episode [deg].
 - ``settling_time``: The settling time [s] (if settled within configured settling threshold (``final_error_angle == 1°``) by default).
 - ``min_margin_koz``: The closest / deepest the boresight vector got to / into a KOZ within the episode.
-
-    > [!NOTE]
-    > If there is no active KOZ, ``min_margin_koz`` shows up as 180° as this value is being used for non-active KOZ states.
-        
 - ``entered_koz_count``: The amount of timesteps a KOZ is violated within the episode.
+
+> [!NOTE]
+If there is no active KOZ, ``min_margin_koz`` shows up as 180° as this value is being used for non-active KOZ states.
 
 Additionally, more metrics are logged into ``tensorboard`` for each model. When starting training, a TensorBoard server is also started at http://localhost:6006. It shows default metrics, such as mean eipsode reward, entropy coefficient, actor- / critic loss etc. But, it also shows many custom metrics. In addition to the metrics in the csv file, there is average torque and whether or not it settled. Since TensorBoard combines all (eight) environment data, one data point shows either the minimum, mean, or maximum of these values. Which one is used, is hinted by the metric name suffix. Regarding the LSTM, all weights and biases are logged as well (which results in many charts depending on the LSTM size).
 
