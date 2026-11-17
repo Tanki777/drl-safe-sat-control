@@ -57,7 +57,7 @@ Before training your first agent with this repository, it makes sense to get a b
 ### 3.1. Project Structure
 Initially, your directory structure should look like this:
 ````
-└───drl_reorientation
+└───drl-safe-sat-control
     ├───APF_SMC
     ├───agent_simulation
     ├───agent_training
@@ -70,7 +70,7 @@ python init_folders.py
 ````
 Afterwards, your directory structure should look like this:
 ````
-├───drl_reorientation
+├───drl-safe-sat-control
 │   ├───APF_SMC
 │   ├───agent_simulation
 │   ├───agent_training
