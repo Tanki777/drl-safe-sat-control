@@ -755,7 +755,7 @@ if __name__ == "__main__":
     #loaded_4 = load_evaluation_data("")
 
     #plot_actual_attitude(loaded_0[0])
-    #plot_for_report(loaded_0[0],time_end=100)
+    #plot_for_report(loaded_0[0],time_end=300)
 
     #multiple_loaded = [loaded_0, loaded_1, loaded_2, loaded_3, loaded_4]
     #evaluation_labels = ["0 KOZs", "1 KOZ", "2 KOZs", "3 KOZs", "3 KOZs ($\\Omega_{\\mathrm{margin}} = [0, \\theta]$°)"]
