@@ -283,7 +283,7 @@ def evaluate_agent_worker(model_name: str, timestep: int, initial_state: list, m
         print(f"Worker {worker_id}: Episode {episode+1}/{episodes}...", end="\r")
         
         # Simulate one episode
-        episode_data = simulate_episode(model, eval_env, max_steps, model_name, create_video=False, controller=controller)
+        episode_data = simulate_episode(model, eval_env, max_steps, controller=controller)
 
         # Append data of this episode to all episodes data for this worker
         simulation_data.append(episode_data)
@@ -434,15 +434,20 @@ def calc_metrics(data: list) -> None:
     print()
     print(f"KOZ margin violated: {len(koz_margin_violated)} episodes")
     print(f"KOZ margin not violated: {len(koz_margin_not_violated)} episodes")
+    
     if len(koz_margin_violated) > 0:
         print(f"Mean KOZ margin violated: {np.mean(koz_margin_violated)} +- {np.std(koz_margin_violated)} degrees")
     if len(koz_margin_not_violated) > 0:
         print(f"Mean KOZ margin not violated: {np.mean(koz_margin_not_violated)} +- {np.std(koz_margin_not_violated)} degrees")
+    
     print()
     print(f"Settled episodes: {settled_count}")
-    print(f"Mean final error of settled episodes: {np.mean(settled_final_err)} +- {np.std(settled_final_err)} degrees")
-    print(f"Mean settling time: {np.mean(settling_time)} +- {np.std(settling_time)} seconds")
-    print(f"Mean control effort: {np.mean(control_effort)} +- {np.std(control_effort)} N^2m^2*s")
+
+    if settled_count > 0:
+        print(f"Mean final error of settled episodes: {np.mean(settled_final_err)} +- {np.std(settled_final_err)} degrees")
+        print(f"Mean settling time: {np.mean(settling_time)} +- {np.std(settling_time)} seconds")
+        print(f"Mean control effort: {np.mean(control_effort)} +- {np.std(control_effort)} N^2m^2*s")
+    
     print(f"Rewards: {np.mean(episode_rewards)} +- {np.std(episode_rewards)}")
     print("--------------------------------------------------")
 
