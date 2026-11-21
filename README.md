@@ -48,6 +48,10 @@ The commands are for Windows.
     ````
     python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
     ````
+8. Create the folders which will be used to store models, evaluation data and other artifacts by running this script:
+    ````
+    python init_folders.py
+    ````
 
 ### 2.1. How to Use
 Before training your first agent with this repository, it makes sense to get a basic understanding of the structure of this project and its components. If you want to skip this part, go to the final section on [how to use](#4-how-to-use).
@@ -55,20 +59,7 @@ Before training your first agent with this repository, it makes sense to get a b
 ## 3. Overview
 
 ### 3.1. Project Structure
-Initially, your directory structure should look like this:
-````
-└───drl-safe-sat-control
-    ├───APF_SMC
-    ├───agent_simulation
-    ├───agent_training
-    ├───assets
-    └───config
-````
-Create the folders which will be used to store models, evaluation data and other artifacts by running this script:
-````
-python init_folders.py
-````
-Afterwards, your directory structure should look like this:
+After following the setup steps, your directory structure should look like this:
 ````
 ├───drl-safe-sat-control
 │   ├───APF_SMC
