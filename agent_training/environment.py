@@ -255,7 +255,7 @@ def build_basilisk_sim(omega_wheel_init: np.ndarray, satellite: spacecraft.Space
     rw_factory = simIncludeRW.rwFactory()
     varRWModel = messaging.BalancedWheels
 
-    # Three orthogonal wheels, as configured in Bevo-2. Reaction wheel model: 3x Rocketlab 10 mNms-1
+    # Three orthogonal wheels, as configured in Bevo-2. Reaction wheel model: 3x Rocketlab 10 mNms
     RW1 = rw_factory.create(
         "custom",
         [1.0, 0.0, 0.0],
