@@ -421,7 +421,7 @@ def calc_metrics(data: list) -> None:
             settled_count += 1
             settling_time.append(tmp_settling_time)
             settled_final_err.append(2 * np.arccos(np.abs(episode_data["quaternion"][-1,0])) * 180/np.pi)
-            control_effort.append(np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2))
+            control_effort.append(np.sum(np.linalg.norm(episode_data["torques"], axis=1)**2) * Constants.TIME_DELTA)
 
         if episode_data["min_margin_koz"] < 0.0:
             koz_margin_violated.append(episode_data["min_margin_koz"])
