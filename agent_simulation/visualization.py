@@ -11,8 +11,6 @@ import matplotlib
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
 import datetime
-import visualtorch
-import torch as th
 
 # Add parent directory to path for imports (must be before local imports)
 _drl_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
